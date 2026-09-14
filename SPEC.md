@@ -136,7 +136,17 @@ Three consequences for the layer's shape:
 
 Prisma does not model policies, so they live in hand-written SQL inside
 `migrate dev --create-only` migrations. Every new tenant table needs enable + force +
-policy in the same migration that creates it.
+policy in the same migration that creates it — with exactly one exception.
+
+**The exception is login.** `POST /auth/login` arrives with an email and no context, so
+it cannot be scoped: the lookup is what *establishes* the scope. Verified: a
+`SECURITY DEFINER` function does **not** bypass `FORCE ROW LEVEL SECURITY` — it returns
+zero rows — so `users` carries `ENABLE` **without** `FORCE`, and the sole unscoped path
+is `auth_lookup(email)`, a `SECURITY DEFINER` function owned by `pulse_owner` returning
+only `{userId, orgId, role}`. `pulse_app` is granted `EXECUTE` on that function and
+nothing else; verified it still reads zero rows from `users` directly. Every other
+tenant table keeps `FORCE`. This is the one hole, it is narrow, and it is the reason
+`AuthDirectory` is the only interface in the contract exempt from tenant scope.
 
 ---
 
