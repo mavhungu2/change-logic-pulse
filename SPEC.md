@@ -15,7 +15,7 @@ justified in §5.
 |---|---|---|
 | `organizations` | `id`, `name`, `logo_url?` | — |
 | `users` | `id`, `org_id→organizations`, `email`, `name`, `role` | `UNIQUE(email)`, `UNIQUE(id, org_id)` |
-| `surveys` | `id`, `org_id→organizations`, `title`, `status`, `created_by→users` | `UNIQUE(id, org_id)`, `UNIQUE INDEX(org_id) WHERE status='active'` |
+| `surveys` | `id`, `org_id→organizations`, `title`, `status`, `created_by→users` | `UNIQUE(id, org_id)` |
 | `questions` | `id`, `survey_id`, **`org_id` [dev]**, `text`, `type`, `position` | `CHECK(position BETWEEN 1 AND 3)`, `UNIQUE(survey_id, position)`, `UNIQUE(id, type)`, `FK(survey_id, org_id)→surveys(id, org_id)` |
 | `responses` | `id`, `survey_id`, `user_id`, `org_id`, `week_start DATE`, `submitted_at` | `UNIQUE(survey_id, user_id, week_start)`, `UNIQUE(id, org_id)`, `FK(survey_id, org_id)→surveys(id, org_id)`, `FK(user_id, org_id)→users(id, org_id)` |
 | `answers` | `id`, `response_id`, `question_id`, **`org_id` [dev]**, **`question_type` [dev]**, `rating_value?`, `bool_value?` | `UNIQUE(response_id, question_id)`, `FK(response_id, org_id)→responses(id, org_id)`, `FK(question_id, question_type)→questions(id, type)`, `CHECK(num_nonnulls(rating_value, bool_value) = 1)`, `CHECK(rating_value BETWEEN 1 AND 5)`, `CHECK(question_type='rating' AND rating_value IS NOT NULL OR question_type='yes_no' AND bool_value IS NOT NULL)` |
@@ -38,8 +38,10 @@ justified in §5.
   half is **impossible** as a CHECK — Postgres rejects subqueries in check constraints
   (*verified: `cannot use subquery in check constraint`*). Denormalising the type onto
   `answers` and pinning it with a composite FK turns it back into a constraint.
-- **`UNIQUE INDEX(org_id) WHERE status='active'`** — `GET /surveys/active` is singular;
-  nothing else stops an org having two active surveys. *Verified.*
+- **Deliberately no uniqueness on `status='active'`** — an org may run several active
+  surveys at once and `GET /surveys/active` returns all of them. Do not "fix" this
+  with a partial unique index. The cadence rule is unaffected: the per-week unique is
+  keyed by `survey_id`, so it already counts one response per member per survey.
 
 ---
 
@@ -49,7 +51,7 @@ justified in §5.
 POST /auth/login                    dev-only; seeded email → JWT {sub, orgId, role}
 GET  /me                            current user + org + role
 
-GET  /surveys/active                Member: org's active survey + questions
+GET  /surveys/active                Member: ALL of org's active surveys + questions
 POST /surveys/:id/responses         Member: submit; 409 if already answered this week
 
 POST /surveys                       Manager: create (≤3 questions)
@@ -59,6 +61,26 @@ GET  /surveys/:id/summary?week=YYYY-MM-DD   Manager: weekly rollup
 
 Another org's survey returns **404, not 403** — and under RLS this is free: the row is
 not visible, the lookup returns null, the handler 404s. No special-casing.
+
+`GET /surveys/active` returns an array, empty when the org has none:
+
+```jsonc
+[
+  {
+    "id": "...",
+    "title": "Weekly check-in",
+    "weekStart": "2026-09-14",
+    "alreadyRespondedThisWeek": false,
+    "questions": [
+      { "id": "...", "text": "How was your week?", "type": "rating", "position": 1 }
+    ]
+  }
+]
+```
+
+`alreadyRespondedThisWeek` is per survey and resolved server-side, so the member screen
+is one fetch rather than one call per survey. `weekStart` is returned rather than
+computed in the browser — the week calculation exists once, on the server.
 
 Summary shape, defined once as a shared type and imported by both sides:
 
@@ -123,8 +145,10 @@ policy in the same migration that creates it.
 2. **RLS proof test** — written against the migration, before the app can reach the DB.
 3. **Auth guard + `AsyncLocalStorage` context + `TenantDb`** — the contract others code to.
 4. **Week utility** — one function, unit-tested; used by submit, summary and seed.
-5. **Member flow**: `GET /surveys/active`, `POST /responses` (409 path included).
-6. **Seed** — 2 orgs, distinct numbers, idempotent.
+5. **Member flow**: `GET /surveys/active` (list; excludes `draft` and `archived`),
+   `POST /responses` including the 409 path. The screen renders a list even at length 1.
+6. **Seed** — 2 orgs, distinct numbers, idempotent. Stays at CLAUDE.md §6's one active
+   survey per org; a test covers the multi-element list, so the seed need not.
 7. **Manager flow**: summary query + React screen.
 8. **Remaining tests**, then README/SOLUTION.md.
 
