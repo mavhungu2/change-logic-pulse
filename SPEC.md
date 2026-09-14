@@ -18,7 +18,7 @@ justified in §5.
 | `surveys` | `id`, `org_id→organizations`, `title`, `status`, `created_by→users` | `UNIQUE(id, org_id)` |
 | `questions` | `id`, `survey_id`, **`org_id` [dev]**, `text`, `type`, `position` | `CHECK(position BETWEEN 1 AND 3)`, `UNIQUE(survey_id, position)`, `UNIQUE(id, type)`, `FK(survey_id, org_id)→surveys(id, org_id)` |
 | `responses` | `id`, `survey_id`, `user_id`, `org_id`, `week_start DATE`, `submitted_at` | `UNIQUE(survey_id, user_id, week_start)`, `UNIQUE(id, org_id)`, `FK(survey_id, org_id)→surveys(id, org_id)`, `FK(user_id, org_id)→users(id, org_id)` |
-| `answers` | `id`, `response_id`, `question_id`, **`org_id` [dev]**, **`question_type` [dev]**, `rating_value?`, `bool_value?` | `UNIQUE(response_id, question_id)`, `FK(response_id, org_id)→responses(id, org_id)`, `FK(question_id, question_type)→questions(id, type)`, `CHECK(num_nonnulls(rating_value, bool_value) = 1)`, `CHECK(rating_value BETWEEN 1 AND 5)`, `CHECK(question_type='rating' AND rating_value IS NOT NULL OR question_type='yes_no' AND bool_value IS NOT NULL)` |
+| `answers` | `id`, `response_id`, `question_id`, **`org_id` [dev]**, `question_type`, `rating_value?`, `bool_value?` | `UNIQUE(response_id, question_id)`, `FK(response_id, org_id)→responses(id, org_id)`, `FK(question_id, question_type)→questions(id, type)`, `CHECK(num_nonnulls(rating_value, bool_value) = 1)`, `CHECK(rating_value BETWEEN 1 AND 5)`, `CHECK(question_type='rating' AND rating_value IS NOT NULL OR question_type='yes_no' AND bool_value IS NOT NULL)` |
 
 ### Why these belong in the schema, not in a service
 
@@ -33,11 +33,12 @@ justified in §5.
   parent **unrepresentable**. RLS stops you reading across tenants; it does not stop a
   buggy service writing a question into another org's survey while correctly scoped.
   These need `UNIQUE(id, org_id)` on the parent. *Verified: the FK is rejected without it.*
-- **`FK(question_id, question_type)→questions(id, type)` + the type CHECK** — CLAUDE.md
-  §3 asks for "CHECK: exactly one value set, matching the question's type". The second
-  half is **impossible** as a CHECK — Postgres rejects subqueries in check constraints
-  (*verified: `cannot use subquery in check constraint`*). Denormalising the type onto
-  `answers` and pinning it with a composite FK turns it back into a constraint.
+- **`FK(question_id, question_type)→questions(id, type)` + the type CHECK** — "the value
+  matches the question's type" cannot be a plain CHECK, because Postgres rejects
+  subqueries there (*verified: `cannot use subquery in check constraint`*), so a
+  constraint on `answers` cannot consult `questions`. The type is copied down and pinned
+  by the composite FK, which cannot drift from the question's own row. CLAUDE.md §3 was
+  corrected to match.
 - **Deliberately no uniqueness on `status='active'`** — an org may run several active
   surveys at once and `GET /surveys/active` returns all of them. Do not "fix" this
   with a partial unique index. The cadence rule is unaffected: the per-week unique is
@@ -166,7 +167,8 @@ summary maths. Anything dropped is a **Known gap** in SOLUTION.md, not half-buil
 
 ## 5. Deviations from CLAUDE.md §3
 
-`org_id` is added to `questions` and `answers`, and `question_type` to `answers`.
+`org_id` is added to `questions` and `answers`. This is the one remaining deviation;
+the `question_type` column was folded back into CLAUDE.md §3 and is no longer one.
 
 §3 gives `org_id` to `users`, `surveys` and `responses` only. Without it, policies on
 `questions` and `answers` must reach their parent via `EXISTS (SELECT 1 FROM surveys …)`

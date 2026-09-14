@@ -70,16 +70,28 @@ each one produces a system that *looks* isolated and is not.
    Owners bypass RLS silently. Two roles: a migration/owner role, and a restricted
    `app_user` role the API connects as. Additionally set `FORCE ROW LEVEL SECURITY` on
    every tenant table.
-2. **`SET LOCAL`, never `SET`.** `SET LOCAL` is scoped to the transaction. A bare `SET`
-   persists on the pooled connection and leaks the previous request's tenant to the next
-   one — a cross-tenant data breach that no test catches unless it is looked for.
+2. **Transaction-scoped, never session-scoped.** A bare `SET` persists on the pooled
+   connection and leaks the previous request's tenant to the next one — a cross-tenant
+   data breach that no test catches unless it is looked for.
+   Set it with **`set_config('app.current_org_id', $1, true)`**, where the third
+   argument is `is_local`. Not `SET LOCAL`: that is the same semantics but cannot take
+   a bind parameter (`PREPARE … AS SET LOCAL …` is a syntax error), so following it
+   literally means interpolating a string into SQL — on the one value that decides
+   tenancy. `set_config` is transaction-local *and* parameterised.
 3. **Every tenant-scoped query runs inside a transaction** that has already applied
-   `SET LOCAL app.current_org_id`. No exceptions, no "just this one read".
+   `app.current_org_id`. No exceptions, no "just this one read".
 4. **Policies must cover `SELECT`, `INSERT`, `UPDATE` and `DELETE`.** An `INSERT` policy
    without `WITH CHECK` lets a tenant write rows into another tenant's org.
-5. **Fail closed.** Use `current_setting('app.current_org_id', true)` — the `true`
-   suppresses the error and yields `NULL` when unset, and `org_id = NULL` matches no
-   rows. Never write a policy that is permissive when the setting is absent.
+5. **Fail closed — and guard the cast.** Use
+   **`NULLIF(current_setting('app.current_org_id', true), '')::uuid`**. The `true`
+   suppresses the error when the setting is absent, but it yields `NULL` only until the
+   GUC is first set: once a transaction that set it commits, the setting reverts to the
+   **empty string**, not to `NULL`, for the remaining life of that pooled connection.
+   Unguarded, `''::uuid` then raises `invalid input syntax for type uuid` instead of
+   matching no rows — so the second request on a reused connection 500s, and the
+   fail-closed test passes or fails depending on connection reuse. `NULLIF` is
+   load-bearing, not defensive. Never write a policy that is permissive when the
+   setting is absent.
 6. The GUC value comes from the **verified token only** — never from a request body,
    query string, header, or route param.
 
@@ -121,9 +133,19 @@ questions      id, survey_id→surveys, text, type('rating'|'yes_no'), position 
 responses      id, survey_id, user_id, org_id, week_start DATE, submitted_at
                UNIQUE (survey_id, user_id, week_start)
 answers        id, response_id→responses, question_id→questions,
+               question_type,                  -- denormalised; see below
                rating_value SMALLINT NULL, bool_value BOOLEAN NULL
-               CHECK: exactly one value set, matching the question's type
+               CHECK (num_nonnulls(rating_value, bool_value) = 1)
+               CHECK: the populated column matches question_type
+               FK (question_id, question_type) → questions (id, type)
 ```
+
+`answers.question_type` is denormalised deliberately. "The value matches the
+question's type" cannot be a plain `CHECK`, because Postgres rejects subqueries in check
+constraints, so a constraint on `answers` cannot consult `questions`. Copying the type
+down and pinning it with the composite FK above makes the invariant a constraint again
+rather than a service-layer convention — the copy cannot drift, because the FK requires
+it to match the question's own row.
 
 Push invariants into the schema wherever possible — unique constraints, `NOT NULL`,
 `CHECK`, FKs. Application validation is the second line of defence, not the first.
@@ -273,10 +295,13 @@ Full coverage is not the goal in 4 hours. These must exist:
    assert a plain `SELECT * FROM surveys` returns **only** org A's rows. This test must
    bypass the application entirely; it is the only thing that proves the policies, rather
    than the service layer, are doing the work.
-3. **RLS fails closed** — with no GUC set, the same query returns zero rows.
+3. **RLS fails closed** — with no GUC set, the same query returns zero rows. Assert it
+   in *both* unset states: a connection that has never set the GUC (`NULL`) and one that
+   set it in an earlier, committed transaction (empty string). Only the second catches a
+   missing `NULLIF`, and only the second resembles production.
 4. **No connection-pool leakage** — run two sequential requests as different orgs over
    the same pool and assert the second sees only its own data. This is the test that
-   catches `SET` where `SET LOCAL` was meant.
+   catches a session-scoped `SET` where `is_local` was meant.
 5. **Write containment** — an `INSERT`/`UPDATE` attempting to place a row in another
    org's `org_id` is rejected by the `WITH CHECK` policy.
 6. **Duplicate response** — second submission in the same week is rejected.
