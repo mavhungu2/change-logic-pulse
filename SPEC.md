@@ -1,145 +1,152 @@
 # SPEC — Multi-Tenant Pulse Surveys
 
-The execution plan. Constraints and the reasoning behind them live in
-[CLAUDE.md](./CLAUDE.md); this file is the order of work and the bar for calling
-it done. Written before implementation, and kept honest as work lands.
+Implementation plan. Rationale lives in [CLAUDE.md](./CLAUDE.md); this exists so the
+code can be checked against it. Deviations from CLAUDE.md §3 are marked **[dev]** and
+justified in §5.
 
 ---
 
-## 1. Goal
+## 1. Data model
 
-One complete vertical slice:
+`id` is `uuid` everywhere. Enums are Postgres enums: `role('manager'|'member')`,
+`survey_status('draft'|'active'|'archived')`, `question_type('rating'|'yes_no')`.
 
-- a **Member** answers their organization's active weekly survey, once per week
-- a **Manager** reads that survey's weekly rollup for their organization
+| Table | Columns | Constraints in the schema |
+|---|---|---|
+| `organizations` | `id`, `name`, `logo_url?` | — |
+| `users` | `id`, `org_id→organizations`, `email`, `name`, `role` | `UNIQUE(email)`, `UNIQUE(id, org_id)` |
+| `surveys` | `id`, `org_id→organizations`, `title`, `status`, `created_by→users` | `UNIQUE(id, org_id)`, `UNIQUE INDEX(org_id) WHERE status='active'` |
+| `questions` | `id`, `survey_id`, **`org_id` [dev]**, `text`, `type`, `position` | `CHECK(position BETWEEN 1 AND 3)`, `UNIQUE(survey_id, position)`, `UNIQUE(id, type)`, `FK(survey_id, org_id)→surveys(id, org_id)` |
+| `responses` | `id`, `survey_id`, `user_id`, `org_id`, `week_start DATE`, `submitted_at` | `UNIQUE(survey_id, user_id, week_start)`, `UNIQUE(id, org_id)`, `FK(survey_id, org_id)→surveys(id, org_id)`, `FK(user_id, org_id)→users(id, org_id)` |
+| `answers` | `id`, `response_id`, `question_id`, **`org_id` [dev]**, **`question_type` [dev]**, `rating_value?`, `bool_value?` | `UNIQUE(response_id, question_id)`, `FK(response_id, org_id)→responses(id, org_id)`, `FK(question_id, question_type)→questions(id, type)`, `CHECK(num_nonnulls(rating_value, bool_value) = 1)`, `CHECK(rating_value BETWEEN 1 AND 5)`, `CHECK(question_type='rating' AND rating_value IS NOT NULL OR question_type='yes_no' AND bool_value IS NOT NULL)` |
 
-Cross-tenant reads and writes are impossible because the **database** refuses
-them, not because the application remembered to filter. Everything else is
-secondary to that property.
+### Why these belong in the schema, not in a service
+
+- **`UNIQUE(survey_id, user_id, week_start)`** — the one-response-per-week rule. An
+  application check is read-then-write and races: two concurrent submits both see
+  "not yet answered". The constraint is the only version that holds. The 409 is a
+  caught unique violation, not a pre-flight `SELECT`.
+- **`position BETWEEN 1 AND 3` + `UNIQUE(survey_id, position)`** — enforces "max 3
+  questions" structurally. Counting rows before insert races the same way. *Verified:
+  the fourth insert is rejected by the CHECK.*
+- **Composite FKs carrying `org_id`** — makes a child row in a different org from its
+  parent **unrepresentable**. RLS stops you reading across tenants; it does not stop a
+  buggy service writing a question into another org's survey while correctly scoped.
+  These need `UNIQUE(id, org_id)` on the parent. *Verified: the FK is rejected without it.*
+- **`FK(question_id, question_type)→questions(id, type)` + the type CHECK** — CLAUDE.md
+  §3 asks for "CHECK: exactly one value set, matching the question's type". The second
+  half is **impossible** as a CHECK — Postgres rejects subqueries in check constraints
+  (*verified: `cannot use subquery in check constraint`*). Denormalising the type onto
+  `answers` and pinning it with a composite FK turns it back into a constraint.
+- **`UNIQUE INDEX(org_id) WHERE status='active'`** — `GET /surveys/active` is singular;
+  nothing else stops an org having two active surveys. *Verified.*
 
 ---
 
-## 2. Milestones
+## 2. Endpoints
 
-Ordered by dependency. Each one ends in a commit and is demonstrable on its own.
+```
+POST /auth/login                    dev-only; seeded email → JWT {sub, orgId, role}
+GET  /me                            current user + org + role
 
-| # | Milestone | Owner | Done when |
-|---|---|---|---|
-| M0 | Skeleton — Nest, Vite, Compose, Prisma, two DB roles | main | ✅ `db:up` + both apps build and boot |
-| M1 | Schema, constraints, RLS policies | Dev 2 | migration applies; `app_user` sees only its org's rows |
-| M2 | Auth + tenant context + DB wrapper | Dev 2 | every query runs in a tx with `SET LOCAL` applied |
-| M3 | Member flow — active survey, submit response | Dev | member submits; second submit in the same week is 409 |
-| M4 | Manager flow — create survey, weekly summary | Dev | summary returns the shape in §4 with correct maths |
-| M5 | Seed — two orgs, distinct numbers | Dev | idempotent; re-running changes no row counts |
-| M6 | Test suite | Lana | the seven tests in §6 pass, and fail when RLS is broken |
-| M7 | README, SOLUTION.md, ai-logs, video | main | deliverables checklist in CLAUDE.md §9 complete |
+GET  /surveys/active                Member: org's active survey + questions
+POST /surveys/:id/responses         Member: submit; 409 if already answered this week
 
-M1 blocks everything. M6's RLS proof can be written against the migration while
-M2 is still in progress — that is the only real parallelism available.
+POST /surveys                       Manager: create (≤3 questions)
+GET  /surveys                       Manager: own org's surveys
+GET  /surveys/:id/summary?week=YYYY-MM-DD   Manager: weekly rollup
+```
 
----
+Another org's survey returns **404, not 403** — and under RLS this is free: the row is
+not visible, the lookup returns null, the handler 404s. No special-casing.
 
-## 3. Tenancy interface contract
+Summary shape, defined once as a shared type and imported by both sides:
 
-Agreed up front so domain work can be written against it before it exists.
-Everything below `src/tenancy/` is Dev 2's; everyone else consumes this and only
-this.
-
-```ts
-type Role = 'manager' | 'member';
-
-interface TenantContext {
-  userId: string;
-  orgId: string;
-  role: Role;
-}
-
-/**
- * Opens a transaction, applies SET LOCAL app.current_org_id from the verified
- * token, and runs the callback inside it. The only route to the database.
- */
-interface TenantDb {
-  run<T>(fn: (tx: TenantTransaction) => Promise<T>): Promise<T>;
+```jsonc
+{
+  "weekStart": "2026-09-14",
+  "completedCount": 4,
+  "eligibleCount": 6,
+  "completionRate": 0.667,
+  "questions": [
+    { "id": "...", "type": "rating", "average": 3.75, "count": 4 },
+    { "id": "...", "type": "yes_no", "counts": { "yes": 3, "no": 1 } }
+  ]
 }
 ```
 
-Two rules that make this structural rather than advisory:
-
-1. Domain services receive **narrow repository interfaces**, never `PrismaClient`
-   and never `TenantDb` directly. A service that can reach the raw client is a
-   service that can forget the GUC.
-2. The org id comes from the **verified JWT only**. Never a body, query, header
-   or route param.
+`eligibleCount` counts users in the org with role `member`. `completionRate` is
+`completedCount / eligibleCount`, `0` when the denominator is `0`.
 
 ---
 
-## 4. Surface
+## 3. What RLS does to the data-access layer
 
-Endpoints and the summary payload are fixed by CLAUDE.md §4. The two shapes worth
-restating, because both the API and the React app depend on them:
+Every tenant table carries `org_id` and gets the **same** policy — no per-table logic:
 
-- `GET /surveys/:id/summary?week=YYYY-MM-DD` returns `weekStart`, `completedCount`,
-  `eligibleCount`, `completionRate`, and a per-question rollup — `average`/`count`
-  for `rating`, `counts.yes`/`counts.no` for `yes_no`.
-- A survey belonging to another org returns **404, not 403**. A 403 confirms the
-  resource exists.
+```sql
+ALTER TABLE <t> ENABLE ROW LEVEL SECURITY;
+ALTER TABLE <t> FORCE ROW LEVEL SECURITY;   -- or pulse_owner bypasses it
+CREATE POLICY tenant_isolation ON <t>
+  USING      (org_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid)
+  WITH CHECK (org_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid);
+```
 
-Shared types live in one place and are imported by both sides, so a rename cannot
-silently break the UI.
+`NULLIF(..., '')` is **load-bearing, not defensive**. After a transaction that set the
+GUC commits, the setting reverts to `''` and not to `NULL` on that pooled connection
+(*verified*). Unguarded, `''::uuid` raises `invalid input syntax for type uuid` — so the
+next request on a reused connection 500s instead of returning zero rows, and the
+fail-closed test passes or fails depending on connection reuse.
 
----
+Three consequences for the layer's shape:
 
-## 5. The four things that exist exactly once
+1. **Nothing reaches the database outside a transaction.** The GUC is transaction-scoped,
+   so the unit of work is the transaction, not the query. `TenantDb.run(fn)` opens it,
+   applies the GUC, and runs `fn`. There is no non-transactional read path to forget.
+2. **The GUC is set with `set_config(name, value, true)`, not `SET LOCAL`.** `SET LOCAL`
+   cannot take a bind parameter (*verified: syntax error*), so it would mean string
+   interpolation into SQL — an injection vector on the value that decides tenancy.
+   `set_config(..., true)` is transaction-local and parameterised. Same semantics, bound.
+3. **Domain services receive narrow repository interfaces, never `PrismaClient`.** A
+   service holding the raw client is a service that can query outside the wrapper. This
+   is what makes the bypass structurally unavailable rather than merely discouraged.
 
-Called out here because each one is a place where a second copy causes a real
-defect, not a style complaint:
-
-1. **ISO week calculation** — needed by submission, summary and seed. Three
-   copies means three opinions about what week it is.
-2. **The tenant-scoped DB wrapper** — every duplicate is a path that can skip the
-   GUC.
-3. **The summary response type** — one definition, both sides.
-4. **Question-type behaviour** — `rating` and `yes_no` differ in validation,
-   storage column and rollup maths. One type-keyed registry, so a third type is
-   a new entry rather than an edit in five files.
-
----
-
-## 6. Test plan
-
-Thin but pointed. Full coverage is not the goal; proving isolation is.
-
-1. **Cross-tenant isolation (API)** — org B cannot read or mutate org A's survey,
-   responses or summary. The headline test.
-2. **RLS proof (database)** — connect directly as `app_user`, set the GUC to org
-   A, assert a bare `SELECT * FROM surveys` returns only org A's rows. Bypasses
-   the application entirely; the only test that proves the *policies* work.
-3. **Fails closed** — no GUC set, zero rows.
-4. **No pool leakage** — two sequential requests as different orgs over one pool;
-   the second sees only its own data. Catches `SET` where `SET LOCAL` was meant.
-5. **Write containment** — an insert aimed at another org's `org_id` is rejected
-   by `WITH CHECK`.
-6. **Duplicate response** — second submission in the same week is rejected.
-7. **Summary maths** — averages and yes/no counts against a known fixture.
-
-**Gate:** before trusting any of these, disable one policy and confirm test 2
-fails. A suite that passes against broken RLS is worse than no suite.
+Prisma does not model policies, so they live in hand-written SQL inside
+`migrate dev --create-only` migrations. Every new tenant table needs enable + force +
+policy in the same migration that creates it.
 
 ---
 
-## 7. Risks
+## 4. Build order, and what gets cut
 
-| Risk | Mitigation |
-|---|---|
-| App role silently bypasses RLS | App role owns nothing; `FORCE ROW LEVEL SECURITY` on every tenant table; verified in M0 |
-| `SET` instead of `SET LOCAL` leaks tenant across pooled requests | One wrapper; test 4 |
-| `INSERT` policy without `WITH CHECK` lets a tenant write into another org | Policies cover all four verbs; test 5 |
-| Timebox overrun | Milestones ship in order; anything unfinished is a **Known gap** in SOLUTION.md, not half-built code |
+1. **Schema + RLS policies + migration** — blocks everything.
+2. **RLS proof test** — written against the migration, before the app can reach the DB.
+3. **Auth guard + `AsyncLocalStorage` context + `TenantDb`** — the contract others code to.
+4. **Week utility** — one function, unit-tested; used by submit, summary and seed.
+5. **Member flow**: `GET /surveys/active`, `POST /responses` (409 path included).
+6. **Seed** — 2 orgs, distinct numbers, idempotent.
+7. **Manager flow**: summary query + React screen.
+8. **Remaining tests**, then README/SOLUTION.md.
+
+Cut in this order if the timebox bites:
+
+1. **Manager create-survey UI** — seed provides surveys; keep `POST /surveys` for the test.
+2. **`GET /surveys` list** — reach the summary by seeded id.
+3. **`?week=` parameter** — current week only.
+4. **Styling** beyond legibility.
+
+Never cut: the RLS proof and cross-tenant tests, the two-org seed, the 409 path, and
+summary maths. Anything dropped is a **Known gap** in SOLUTION.md, not half-built code.
 
 ---
 
-## 8. Out of scope
+## 5. Deviations from CLAUDE.md §3
 
-Per CLAUDE.md: no password reset, email, real SSO, self-signup, scheduling,
-charting libraries, notifications, pagination, i18n, dark mode, role management
-UI, soft deletes, audit logs. Gaps are documented, not coded around.
+`org_id` is added to `questions` and `answers`, and `question_type` to `answers`.
+
+§3 gives `org_id` to `users`, `surveys` and `responses` only. Without it, policies on
+`questions` and `answers` must reach their parent via `EXISTS (SELECT 1 FROM surveys …)`
+— a correlated subquery per row, evaluated under the parent's own RLS, on the hottest
+path in the app. Carrying `org_id` keeps one identical policy on all five tables and
+makes the composite FKs above possible. The column is not free-floating: the FK to
+`(id, org_id)` makes a mismatch with the parent impossible.
