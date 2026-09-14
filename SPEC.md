@@ -152,14 +152,17 @@ tenant table keeps `FORCE`. This is the one hole, it is narrow, and it is the re
 
 ## 4. Build order, and what gets cut
 
-1. **Schema + RLS policies + migration** — blocks everything.
-2. **RLS proof test** — written against the migration, before the app can reach the DB.
-3. **Auth guard + `AsyncLocalStorage` context + `TenantDb`** — the contract others code to.
-4. **Week utility** — one function, unit-tested; used by submit, summary and seed.
-5. **Member flow**: `GET /surveys/active` (list; excludes `draft` and `archived`),
+1. **Week utility** — one pure function, unit-tested. Nothing depends on it existing
+   later and three things depend on it existing once, so it goes first.
+2. **Schema + RLS policies + migration** — blocks everything after this.
+3. **Seed** — 2 orgs, distinct numbers, idempotent. Runs on the **owner** connection, so
+   it needs only steps 1–2, not the wrapper. Landing it here rather than late gives
+   everyone real data to build against while the plumbing is still being written. Stays
+   at CLAUDE.md §6's one active survey per org; a test covers the multi-element list.
+4. **RLS proof test** — written against the migration, before the app can reach the DB.
+5. **Auth guard + `AsyncLocalStorage` context + `TenantDb`** — implements the contract.
+6. **Member flow**: `GET /surveys/active` (list; excludes `draft` and `archived`),
    `POST /responses` including the 409 path. The screen renders a list even at length 1.
-6. **Seed** — 2 orgs, distinct numbers, idempotent. Stays at CLAUDE.md §6's one active
-   survey per org; a test covers the multi-element list, so the seed need not.
 7. **Manager flow**: summary query + React screen.
 8. **Remaining tests**, then README/SOLUTION.md.
 

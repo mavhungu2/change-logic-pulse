@@ -69,7 +69,15 @@ each one produces a system that *looks* isolated and is not.
 1. **The app's database role must not own the tables and must not have `BYPASSRLS`.**
    Owners bypass RLS silently. Two roles: a migration/owner role, and a restricted
    `app_user` role the API connects as. Additionally set `FORCE ROW LEVEL SECURITY` on
-   every tenant table.
+   every tenant table — **except `users`**, which carries `ENABLE` without `FORCE`.
+   The reason is login: `POST /auth/login` arrives with an email and no tenant context,
+   because the lookup is what *establishes* the context, so it cannot be scoped. The
+   usual remedy — a narrow `SECURITY DEFINER` function — does **not** survive `FORCE`:
+   a definer function is still subject to the policy and returns zero rows. So `users`
+   keeps `ENABLE` only, and the sole unscoped path is `auth_lookup(email)`, a
+   `SECURITY DEFINER` function owned by the migration role that returns nothing but
+   `{ userId, orgId, role }`. `app_user` is granted `EXECUTE` on that function and
+   still reads zero rows from `users` directly. One hole, narrow, and named.
 2. **Transaction-scoped, never session-scoped.** A bare `SET` persists on the pooled
    connection and leaks the previous request's tenant to the next one — a cross-tenant
    data breach that no test catches unless it is looked for.
@@ -217,6 +225,13 @@ claim demonstrable in the video:
 
 Idempotent: re-running the seed must not duplicate rows.
 
+The seed runs on the **migration/owner connection**, not as `app_user`. It writes across
+both organizations, which is exactly what RLS exists to forbid, and creating an
+organization has nowhere to take a tenant context from — the row being inserted *is* the
+tenant. This is why the seed belongs to Dev 2 alongside the rest of the data layer (§8),
+and why it is not evidence that the wrapper can be bypassed: the seed is not the
+application.
+
 ---
 
 ## 7. Workflow
@@ -335,11 +350,12 @@ Does not write production code. Responsibilities:
 
 Takes the highest-risk work, because it is the part where a subtle mistake is invisible.
 
-| Owns | `prisma/schema.prisma`, `prisma/migrations/**`, RLS policy SQL, `src/tenancy/**`, `src/auth/**` |
+| Owns | `prisma/schema.prisma`, `prisma/migrations/**`, `prisma/seed.ts`, RLS policy SQL, `src/tenancy/**`, `src/auth/**` |
 |---|---|
 
 Delivers the schema with constraints pushed into it, the RLS policies, the role
-separation, and the `AsyncLocalStorage` + transaction wrapper.
+separation, the `AsyncLocalStorage` + transaction wrapper, and the seed — which needs the
+owner connection for the reason given in §6.
 
 Standards are non-negotiable: no dead code, no unnecessary complexity, declarative and
 data-driven over imperative, DRY enforced before the second copy exists. Dev 2 is an
@@ -350,10 +366,10 @@ Reports: what was implemented, patterns applied, **what was rejected and why**, 
 
 ### Dev — domain and UI
 
-| Owns | `src/surveys/**`, `src/responses/**`, `src/summary/**`, `prisma/seed.ts`, `web/**` |
+| Owns | `src/surveys/**`, `src/responses/**`, `src/summary/**`, `web/**` |
 |---|---|
 
-Builds the endpoints, summary query, seed, and the two React flows. Codes against the
+Builds the endpoints, summary query, and the two React flows. Codes against the
 tenancy interface and **must not edit Dev 2's files** — if the interface is wrong, raise
 it to the main thread rather than reaching across the boundary.
 
@@ -376,11 +392,19 @@ Lana proposes the minimal refactor and hands it to whoever owns those files.
 
 True parallelism is limited — Dev 2's schema blocks everyone, so order matters:
 
-1. Main thread agrees the tenancy interface contract
+1. Main thread agrees the tenancy interface contract and the week utility
 2. Dev 2 builds schema + policies *(blocking)*
-3. Lana writes the RLS proof against the migration **while** Dev 2 builds the plumbing
-4. Dev builds domain and UI once the wrapper interface is stable
-5. All three report back; main thread synthesises and runs the adversarial review
+3. Dev 2 seeds immediately after the migration — it runs on the owner connection, so it
+   does not wait for the wrapper, and it is what gives Dev and Lana real data to work
+   against while the plumbing is still being written
+4. Lana writes the RLS proof against the migration **while** Dev 2 builds the plumbing
+5. Dev builds domain and UI once the wrapper interface is stable
+6. All three report back; main thread synthesises and runs the adversarial review
+
+Dev 2 now holds schema, policies, wrapper, auth *and* seed. That is a deliberate
+concentration of the risky work in one place, but it makes Dev 2 the critical path for
+longer — if the timebox tightens, the seed is the piece to hand back, since it needs
+only the schema.
 
 ### Conflict rule
 
