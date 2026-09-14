@@ -1,0 +1,14 @@
+// Models are added in a later step — this file currently carries configuration only.
+//
+// Note for Prisma 7: the connection string no longer lives here. `datasource`
+// declares the provider, and the URL is supplied by prisma.config.ts.
+
+generator client {
+  provider = "prisma-client"
+  // Inside src/ so `nest build` compiles the generated client into dist/.
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}

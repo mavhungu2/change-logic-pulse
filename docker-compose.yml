@@ -1,0 +1,35 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: pulse-postgres
+    restart: unless-stopped
+    environment:
+      # Superuser — used by the entrypoint and the init script only. The
+      # application never connects as this role.
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: pulse
+      # Pinned so the data volume mount point is the same across image majors.
+      PGDATA: /var/lib/postgresql/data
+
+      # Consumed by docker/initdb/01-roles.sh. Keep in sync with .env.
+      OWNER_ROLE: pulse_owner
+      OWNER_PASSWORD: pulse_owner_pw
+      APP_ROLE: pulse_app
+      APP_PASSWORD: pulse_app_pw
+    ports:
+      # 5433 on the host: a natively-installed PostgreSQL commonly holds 5432.
+      # Override with POSTGRES_HOST_PORT in .env if 5433 is taken too.
+      - '${POSTGRES_HOST_PORT:-5433}:5432'
+    volumes:
+      - pulse-pgdata:/var/lib/postgresql/data
+      # Runs once, on an empty data directory.
+      - ./docker/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d pulse']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pulse-pgdata:
