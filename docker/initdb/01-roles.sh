@@ -36,10 +36,15 @@ psql -v ON_ERROR_STOP=1 \
 	GRANT CONNECT ON DATABASE :"db_name" TO :"app_role";
 	GRANT USAGE ON SCHEMA public TO :"app_role";
 
-	-- Tables created later by migrations are reachable by the app role without a
-	-- follow-up GRANT, but are still owned by pulse_owner.
-	ALTER DEFAULT PRIVILEGES FOR ROLE :"owner_role" IN SCHEMA public
-	  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO :"app_role";
-	ALTER DEFAULT PRIVILEGES FOR ROLE :"owner_role" IN SCHEMA public
-	  GRANT USAGE, SELECT ON SEQUENCES TO :"app_role";
+	-- Deliberately NO "ALTER DEFAULT PRIVILEGES". A blanket default would grant the
+	-- app role DML on every table a migration ever creates — including Prisma's own
+	-- _prisma_migrations, and including any future table whose policies nobody has
+	-- written yet. Grants are made per table, in the migration that creates it, so
+	-- that "what can the app actually do" is answerable by reading one file.
+
+	-- Lets pulse_owner define a function with SET app.auth_lookup, which is how the
+	-- login lookup — the one read that cannot be tenant-scoped, because it is what
+	-- establishes the tenant — is confined to a single SECURITY DEFINER function.
+	-- Requires superuser, so it cannot live in a migration.
+	GRANT SET ON PARAMETER "app.auth_lookup" TO :"owner_role";
 EOSQL

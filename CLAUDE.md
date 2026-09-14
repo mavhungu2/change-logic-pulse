@@ -69,15 +69,19 @@ each one produces a system that *looks* isolated and is not.
 1. **The app's database role must not own the tables and must not have `BYPASSRLS`.**
    Owners bypass RLS silently. Two roles: a migration/owner role, and a restricted
    `app_user` role the API connects as. Additionally set `FORCE ROW LEVEL SECURITY` on
-   every tenant table — **except `users`**, which carries `ENABLE` without `FORCE`.
-   The reason is login: `POST /auth/login` arrives with an email and no tenant context,
-   because the lookup is what *establishes* the context, so it cannot be scoped. The
-   usual remedy — a narrow `SECURITY DEFINER` function — does **not** survive `FORCE`:
-   a definer function is still subject to the policy and returns zero rows. So `users`
-   keeps `ENABLE` only, and the sole unscoped path is `auth_lookup(email)`, a
-   `SECURITY DEFINER` function owned by the migration role that returns nothing but
-   `{ userId, orgId, role }`. `app_user` is granted `EXECUTE` on that function and
-   still reads zero rows from `users` directly. One hole, narrow, and named.
+   **every** tenant table, `users` included.
+   Login is the case that makes this awkward: `POST /auth/login` arrives with an email
+   and no tenant context, because the lookup is what *establishes* the context. A
+   `SECURITY DEFINER` function does **not** by itself survive `FORCE` — it is still
+   subject to the policy and returns zero rows. The resolution keeps `FORCE`: a second
+   permissive `SELECT` policy on `users`, granted `TO` the **owner role only**, which
+   applies solely while `app.auth_lookup` is set; and one `SECURITY DEFINER` function
+   that sets that flag for its own duration and returns nothing but
+   `{ userId, orgId, role }`. `app_user` may call the function and may even set the
+   flag itself — any role can set a custom GUC — and gains nothing, because the policy
+   never applies to it. Defining a function with a `SET` clause on a custom parameter
+   needs `GRANT SET ON PARAMETER`, which is superuser-only and therefore lives in
+   `docker/initdb/`, not in a migration.
 2. **Transaction-scoped, never session-scoped.** A bare `SET` persists on the pooled
    connection and leaks the previous request's tenant to the next one — a cross-tenant
    data breach that no test catches unless it is looked for.

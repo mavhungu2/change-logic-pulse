@@ -57,8 +57,12 @@ This maps onto two connection strings that never meet:
 - `MIGRATION_DATABASE_URL` — read by `prisma.config.ts`, used by the Prisma CLI only
 - `DATABASE_URL` — used by the API at runtime
 
-Tables created by future migrations are granted to `pulse_app` automatically via
-`ALTER DEFAULT PRIVILEGES`, so no follow-up `GRANT` is needed per migration.
+There is deliberately **no** `ALTER DEFAULT PRIVILEGES`: a blanket default would grant
+the app role DML on every table a migration ever creates, including Prisma's own
+`_prisma_migrations` and any future table whose policies nobody has written yet. Each
+table is granted explicitly in the migration that creates it, so what the app can do is
+answerable by reading one file. Today that is `SELECT` on `organizations` and `users`,
+`SELECT, INSERT` on the rest, and no `UPDATE` or `DELETE` anywhere.
 
 `pulse_owner` has `CREATEDB` because `prisma migrate dev` builds a shadow database.
 
@@ -69,8 +73,28 @@ npm run db:psql:app      # psql as the restricted role
 npm run db:psql:owner    # psql as the owner
 ```
 
-Once tenant tables exist they must also be set to `FORCE ROW LEVEL SECURITY`, or the
-owner role will still bypass their policies during migrations and maintenance.
+Every tenant table carries `ENABLE` **and** `FORCE ROW LEVEL SECURITY`, so the policies
+bind the owner role too — without `FORCE`, a table's owner silently bypasses its own
+policies. Scoped to nothing, the app role sees nothing:
+
+```sql
+-- as pulse_app, no tenant context
+SELECT count(*) FROM surveys;                                  -- 0
+
+BEGIN;
+SELECT set_config('app.current_org_id', '<an org id>', true);
+SELECT count(*) FROM surveys;                                  -- that org's surveys
+COMMIT;
+
+SELECT count(*) FROM surveys;                                  -- 0 again
+```
+
+The GUC is transaction-local, so the last query is the important one: a pooled
+connection carries nothing into the next request.
+
+A new tenant table is not finished until it has `ENABLE`, `FORCE`, four policies and its
+own `GRANT`, all in the migration that creates it. There is no default privilege to fall
+back on.
 
 ## Commands
 

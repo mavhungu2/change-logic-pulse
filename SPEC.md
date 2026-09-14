@@ -138,15 +138,17 @@ Prisma does not model policies, so they live in hand-written SQL inside
 `migrate dev --create-only` migrations. Every new tenant table needs enable + force +
 policy in the same migration that creates it — with exactly one exception.
 
-**The exception is login.** `POST /auth/login` arrives with an email and no context, so
-it cannot be scoped: the lookup is what *establishes* the scope. Verified: a
-`SECURITY DEFINER` function does **not** bypass `FORCE ROW LEVEL SECURITY` — it returns
-zero rows — so `users` carries `ENABLE` **without** `FORCE`, and the sole unscoped path
-is `auth_lookup(email)`, a `SECURITY DEFINER` function owned by `pulse_owner` returning
-only `{userId, orgId, role}`. `pulse_app` is granted `EXECUTE` on that function and
-nothing else; verified it still reads zero rows from `users` directly. Every other
-tenant table keeps `FORCE`. This is the one hole, it is narrow, and it is the reason
-`AuthDirectory` is the only interface in the contract exempt from tenant scope.
+**The exception is login**, and it does not cost a `FORCE`. `POST /auth/login` arrives
+with an email and no context, so it cannot be scoped: the lookup is what *establishes*
+the scope. A `SECURITY DEFINER` function alone does **not** get through `FORCE`
+(verified: zero rows). So `users` keeps `ENABLE` **and** `FORCE`, plus a second
+permissive `SELECT` policy granted `TO pulse_owner` only, active solely while
+`app.auth_lookup` is set — and one definer function, `app_auth_lookup(email)`, that
+sets that flag for its own duration and returns only `{userId, orgId, role}`.
+`pulse_app` may call it and may set the flag itself; it gains nothing, because the
+policy never applies to it (verified: still zero rows direct). This is the one hole, it
+is a function rather than a table, and it is why `AuthDirectory` is the only interface
+in the contract exempt from tenant scope.
 
 ---
 
