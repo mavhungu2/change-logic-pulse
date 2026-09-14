@@ -336,13 +336,19 @@ concurrently without colliding.
 This structure is also material for SOLUTION.md: Task 4 asks how the work was broken
 down and what was delegated versus kept. A deliberate partition answers that directly.
 
-### Main thread — context and orchestration
+### Main thread — context, orchestration, and the shared boundary
 
-Does not write production code. Responsibilities:
+Writes no feature code. It owns only the artifacts the other three would otherwise have
+to share — the places where a second copy, or a late definition, blocks someone.
 
 - Owns `CLAUDE.md`, `SPEC.md`, and every decision in §2
-- **Defines the tenancy interface contract before delegating**, so domain work can be
+- Owns `src/tenancy/contract.ts` — **defined before delegating**, so domain work can be
   written against it while it is still being implemented
+- Owns `src/common/week.ts` — the ISO week calculation. None of the other three can own
+  it, because all of them need it: the seed and response submission write `week_start`,
+  the summary reads it. Whoever wrote it second would be editing another agent's file,
+  and the DRY rule in §7 exists precisely to stop that. Its unit test is co-located at
+  `src/common/week.spec.ts`; `test/**` stays Lana's exclusively.
 - Partitions work, resolves cross-boundary questions, prevents file conflicts
 - Final synthesis: acceptance criteria, SOLUTION.md, release readiness
 
