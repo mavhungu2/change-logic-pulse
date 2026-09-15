@@ -16,6 +16,11 @@
     "noEmit": true,
     "jsx": "react-jsx",
 
+    /* The API's response types are imported directly from the server source, so
+       the summary shape is defined once (CLAUDE.md DRY #3). Type-only imports,
+       erased at build time — no server code is bundled. */
+    "paths": { "@api/*": ["../src/*"] },
+
     /* Linting */
     "strict": true,
     "noUnusedLocals": true,
