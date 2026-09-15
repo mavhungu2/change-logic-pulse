@@ -29,24 +29,37 @@ describe('summarise', () => {
 
   it('averages ratings from the sum and count the database returned', () => {
     const summary = summarise(
-      inputs({ tallies: [{ questionId: 'q1', type: 'rating', sum: 15, count: 4 }] }),
+      inputs({ tallies: [{ questionId: 'q1', text: 'How was your week?', type: 'rating', sum: 15, count: 4 }] }),
     );
-    expect(summary.questions[0]).toEqual({ id: 'q1', type: 'rating', average: 3.75, count: 4 });
+    expect(summary.questions[0]).toEqual({
+      id: 'q1',
+      text: 'How was your week?',
+      type: 'rating',
+      average: 3.75,
+      count: 4,
+    });
   });
 
   it('reports no average when nobody answered, rather than zero', () => {
     const summary = summarise(
-      inputs({ tallies: [{ questionId: 'q1', type: 'rating', sum: 0, count: 0 }] }),
+      inputs({ tallies: [{ questionId: 'q1', text: 'How was your week?', type: 'rating', sum: 0, count: 0 }] }),
     );
-    expect(summary.questions[0]).toEqual({ id: 'q1', type: 'rating', average: null, count: 0 });
+    expect(summary.questions[0]).toEqual({
+      id: 'q1',
+      text: 'How was your week?',
+      type: 'rating',
+      average: null,
+      count: 0,
+    });
   });
 
   it('passes yes/no counts through untouched', () => {
     const summary = summarise(
-      inputs({ tallies: [{ questionId: 'q2', type: 'yes_no', yes: 3, no: 1 }] }),
+      inputs({ tallies: [{ questionId: 'q2', text: 'Blocked?', type: 'yes_no', yes: 3, no: 1 }] }),
     );
     expect(summary.questions[0]).toEqual({
       id: 'q2',
+      text: 'Blocked?',
       type: 'yes_no',
       counts: { yes: 3, no: 1 },
     });

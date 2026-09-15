@@ -146,8 +146,20 @@ export interface SubmitResponse {
 
 /** Raw tallies, not finished statistics — the maths is pure and testable without a database. */
 export type QuestionTally =
-  | { readonly questionId: QuestionId; readonly type: 'rating'; readonly sum: number; readonly count: number }
-  | { readonly questionId: QuestionId; readonly type: 'yes_no'; readonly yes: number; readonly no: number };
+  | {
+      readonly questionId: QuestionId;
+      readonly text: string;
+      readonly type: 'rating';
+      readonly sum: number;
+      readonly count: number;
+    }
+  | {
+      readonly questionId: QuestionId;
+      readonly text: string;
+      readonly type: 'yes_no';
+      readonly yes: number;
+      readonly no: number;
+    };
 
 export interface SummaryInputs {
   readonly weekStart: IsoWeekStart;

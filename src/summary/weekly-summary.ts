@@ -7,6 +7,7 @@ import type { IsoWeekStart, QuestionId, SummaryInputs } from '../tenancy/contrac
 export type QuestionSummary =
   | {
       readonly id: QuestionId;
+      readonly text: string;
       readonly type: 'rating';
       /** null when nobody answered — an average of nothing is not zero. */
       readonly average: number | null;
@@ -14,6 +15,7 @@ export type QuestionSummary =
     }
   | {
       readonly id: QuestionId;
+      readonly text: string;
       readonly type: 'yes_no';
       readonly counts: { readonly yes: number; readonly no: number };
     };
@@ -47,12 +49,14 @@ export function summarise(inputs: SummaryInputs): WeeklySummary {
       tally.type === 'rating'
         ? {
             id: tally.questionId,
+            text: tally.text,
             type: 'rating',
             average: tally.count === 0 ? null : round(tally.sum / tally.count, 2),
             count: tally.count,
           }
         : {
             id: tally.questionId,
+            text: tally.text,
             type: 'yes_no',
             counts: { yes: tally.yes, no: tally.no },
           },

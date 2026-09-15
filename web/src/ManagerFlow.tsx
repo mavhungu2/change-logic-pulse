@@ -29,9 +29,9 @@ function Summary({ surveyId, token }: { surveyId: string; token: string }) {
 
       {/* Numbers, not charts: §1 rules charting libraries out of scope. */}
       <dl className="rollup">
-        {summary.questions.map((question, index) => (
+        {summary.questions.map((question) => (
           <div key={question.id} className="rollup-row">
-            <dt>Question {index + 1}</dt>
+            <dt>{question.text}</dt>
             <dd>
               {question.type === 'rating' ? (
                 question.average === null ? (

@@ -10,6 +10,7 @@ import { TenantDb } from './tenant-db.js';
 
 interface TallyJson {
   readonly questionId: string;
+  readonly text: string;
   readonly type: 'rating' | 'yes_no';
   readonly ratingCount: number;
   readonly ratingSum: number;
@@ -64,7 +65,7 @@ export class PrismaSummaryRepository implements SummaryReporting {
            WHERE r.week_start = CAST(${weekStart} AS date)
         ),
         tallies AS (
-          SELECT q.id, q.type, q.position,
+          SELECT q.id, q.text, q.type, q.position,
                  count(a.rating_value)::int                          AS rating_count,
                  coalesce(sum(a.rating_value), 0)::int               AS rating_sum,
                  count(*) FILTER (WHERE a.bool_value IS TRUE)::int   AS yes_count,
@@ -74,7 +75,7 @@ export class PrismaSummaryRepository implements SummaryReporting {
             LEFT JOIN answers a
               ON a.question_id = q.id
              AND a.response_id IN (SELECT id FROM week_responses)
-           GROUP BY q.id, q.type, q.position
+           GROUP BY q.id, q.text, q.type, q.position
         )
         SELECT
           (SELECT count(*)::int FROM users WHERE role = 'member') AS eligible_count,
@@ -82,6 +83,7 @@ export class PrismaSummaryRepository implements SummaryReporting {
           coalesce(
             (SELECT json_agg(json_build_object(
                       'questionId',  tl.id,
+                      'text',        tl.text,
                       'type',        tl.type,
                       'ratingCount', tl.rating_count,
                       'ratingSum',   tl.rating_sum,
@@ -107,6 +109,12 @@ export class PrismaSummaryRepository implements SummaryReporting {
 /** Type-keyed, so a third question type is a new branch here and nowhere else. */
 function toTally(tally: TallyJson): QuestionTally {
   return tally.type === 'rating'
-    ? { questionId: tally.questionId, type: 'rating', sum: tally.ratingSum, count: tally.ratingCount }
-    : { questionId: tally.questionId, type: 'yes_no', yes: tally.yes, no: tally.no };
+    ? {
+        questionId: tally.questionId,
+        text: tally.text,
+        type: 'rating',
+        sum: tally.ratingSum,
+        count: tally.ratingCount,
+      }
+    : { questionId: tally.questionId, text: tally.text, type: 'yes_no', yes: tally.yes, no: tally.no };
 }

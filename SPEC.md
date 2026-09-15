@@ -92,8 +92,8 @@ Summary shape, defined once as a shared type and imported by both sides:
   "eligibleCount": 6,
   "completionRate": 0.667,
   "questions": [
-    { "id": "...", "type": "rating", "average": 3.75, "count": 4 },
-    { "id": "...", "type": "yes_no", "counts": { "yes": 3, "no": 1 } }
+    { "id": "...", "text": "How was your week?", "type": "rating", "average": 3.75, "count": 4 },
+    { "id": "...", "text": "Blocked?", "type": "yes_no", "counts": { "yes": 3, "no": 1 } }
   ]
 }
 ```

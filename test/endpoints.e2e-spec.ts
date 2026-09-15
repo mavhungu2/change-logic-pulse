@@ -235,8 +235,8 @@ describe('the weekly summary', () => {
     expect(summary.body.eligibleCount).toBeGreaterThanOrEqual(3);
     expect(summary.body.completionRate).toBeCloseTo(1 / memberCountA, 3);
     expect(summary.body.questions).toEqual([
-      { id: questionIds[0], type: 'rating', average: 4, count: 1 },
-      { id: questionIds[1], type: 'yes_no', counts: { yes: 1, no: 0 } },
+      { id: questionIds[0], text: 'How was your week?', type: 'rating', average: 4, count: 1 },
+      { id: questionIds[1], text: 'Blocked?', type: 'yes_no', counts: { yes: 1, no: 0 } },
     ]);
   });
 
@@ -251,6 +251,7 @@ describe('the weekly summary', () => {
     expect(summary.body.completionRate).toBe(0);
     expect(summary.body.questions[0]).toEqual({
       id: questionIds[0],
+      text: 'How was your week?',
       type: 'rating',
       average: null,
       count: 0,
