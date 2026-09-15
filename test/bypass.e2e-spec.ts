@@ -11,6 +11,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { Test } from '@nestjs/testing';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PrismaClient } from '../src/generated/prisma/client.js';
+import { databaseScope } from '../src/tenancy/internal-scope.js';
 import { createGuardedClient } from '../src/tenancy/prisma.js';
 import { TenancyModule } from '../src/tenancy/tenancy.module.js';
 import { isTenancyError } from '../src/tenancy/tenancy.errors.js';
@@ -72,6 +73,35 @@ describe('layer 2 — a client obtained anyway refuses to run outside the wrappe
     const client = createGuardedClient(APP_URL!);
     try {
       await expect(client.$queryRaw`SELECT 1`).rejects.toThrow(/outside TenantDb\.run\(\)/);
+    } finally {
+      await client.$disconnect();
+    }
+  });
+});
+
+describe('S5 — the login scope is not a general-purpose escape hatch', () => {
+  it('refuses a model query issued inside the unscoped auth transaction', async () => {
+    const client = createGuardedClient(APP_URL!);
+    try {
+      // The login lookup runs with no tenant set, because the lookup is what
+      // establishes the tenant. That scope must therefore permit the lookup and
+      // nothing else — otherwise it is a hole through the guard, reachable by
+      // anyone who adds a line to the auth path.
+      await databaseScope.run({ reason: 'auth' }, async () => {
+        await expect(client.survey.findMany()).rejects.toThrow(/login lookup|not permitted/i);
+      });
+    } finally {
+      await client.$disconnect();
+    }
+  });
+
+  it('refuses a second statement inside it', async () => {
+    const client = createGuardedClient(APP_URL!);
+    try {
+      await databaseScope.run({ reason: 'auth' }, async () => {
+        await client.$queryRaw`SELECT 1`;
+        await expect(client.$queryRaw`SELECT 2`).rejects.toThrow(/one statement|login lookup/i);
+      });
     } finally {
       await client.$disconnect();
     }

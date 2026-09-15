@@ -1,6 +1,12 @@
 import 'dotenv/config';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module.js';
+import { scrubOwnerCredentials } from './config.js';
+
+// Immediately after dotenv and before anything can read them: the API has no
+// use for the migration role's credentials, and what is not in the process
+// cannot be used by it.
+scrubOwnerCredentials();
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);

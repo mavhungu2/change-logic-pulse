@@ -11,4 +11,10 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 export const databaseScope = new AsyncLocalStorage<{
   /** 'auth' is the login lookup, which legitimately has no tenant yet. */
   readonly reason: 'tenant' | 'auth';
+  /**
+   * Statements issued so far in an 'auth' scope. Maintained by the guard in
+   * prisma.ts, which allows that scope exactly one raw statement — the lookup
+   * — so the one path with no tenant set cannot be widened into a second query.
+   */
+  statements?: number;
 }>();

@@ -25,7 +25,9 @@ export function createGuardedClient(connectionString: string): PrismaClient {
   return client.$extends({
     query: {
       $allOperations({ model, operation, args, query }) {
-        if (databaseScope.getStore() === undefined) {
+        const scope = databaseScope.getStore();
+
+        if (scope === undefined) {
           throw new TenancyViolation(
             'TENANT_CONTEXT_MISSING',
             `${model ?? 'raw'}.${operation} was issued outside TenantDb.run(). ` +
@@ -34,6 +36,29 @@ export function createGuardedClient(connectionString: string): PrismaClient {
               'Inject a repository, not a database client.',
           );
         }
+
+        // The login lookup is the one transaction with no tenant set, because
+        // the lookup is what establishes the tenant. Being inside it must not
+        // mean being free: it permits exactly one raw statement, so it stays a
+        // door for the lookup rather than a hole through the guard.
+        if (scope.reason === 'auth') {
+          if (model !== undefined) {
+            throw new TenancyViolation(
+              'TENANT_CONTEXT_MISSING',
+              `${model}.${operation} is not permitted in the login lookup, which runs ` +
+                'with no tenant set. Use TenantDb.run().',
+            );
+          }
+          scope.statements = (scope.statements ?? 0) + 1;
+          if (scope.statements > 1) {
+            throw new TenancyViolation(
+              'TENANT_CONTEXT_MISSING',
+              'The login lookup runs exactly one statement; this is the ' +
+                `${scope.statements}. Anything further belongs in TenantDb.run().`,
+            );
+          }
+        }
+
         return query(args);
       },
     },

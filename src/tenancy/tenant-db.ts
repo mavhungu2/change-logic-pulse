@@ -1,4 +1,6 @@
-import { Injectable, type OnModuleDestroy } from '@nestjs/common';
+import { Injectable, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
+import { requireDatabaseUrl } from '../config.js';
+import { assertRuntimeRoleIsLeastPrivileged } from './least-privilege.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { databaseScope } from './internal-scope.js';
 import { createGuardedClient, type PrismaClient } from './prisma.js';
@@ -6,14 +8,26 @@ import { tenantContext } from './tenant-context.js';
 
 export type TenantTransaction = Prisma.TransactionClient;
 
+/** Exactly the claim fields app_auth_lookup returns. */
+export interface AuthLookupRow {
+  readonly user_id: string;
+  readonly org_id: string;
+  readonly user_role: 'manager' | 'member';
+}
+
 @Injectable()
-export class TenantDb implements OnModuleDestroy {
+export class TenantDb implements OnModuleInit, OnModuleDestroy {
   readonly #client: PrismaClient;
+  readonly #url: string;
 
   constructor() {
-    const url = process.env['DATABASE_URL'];
-    if (!url) throw new Error('DATABASE_URL is not set');
-    this.#client = createGuardedClient(url);
+    this.#url = requireDatabaseUrl();
+    this.#client = createGuardedClient(this.#url);
+  }
+
+  /** Refuses to serve as a privileged role. See least-privilege.ts. */
+  async onModuleInit(): Promise<void> {
+    await assertRuntimeRoleIsLeastPrivileged(this.#url);
   }
 
   /**
@@ -82,13 +96,23 @@ export class TenantDb implements OnModuleDestroy {
   /**
    * The login lookup, which runs before any tenant exists — the lookup is what
    * establishes it. It reaches the database through app_auth_lookup, a
-   * SECURITY DEFINER function that returns claim fields and nothing else; the
+   * SECURITY DEFINER function returning claim fields and nothing else; the
    * users table itself stays closed to this connection. See the migration.
+   *
+   * Deliberately not a callback. An earlier version took one, which meant the
+   * only code path that runs with no tenant set would execute whatever a caller
+   * handed it — a hole through the guard, one line from being widened. The
+   * statement is fixed here, and the guard allows this scope exactly one.
    */
-  async runAuthLookup<T>(work: (tx: TenantTransaction) => Promise<T>): Promise<T> {
-    return this.#client.$transaction(async (tx) =>
-      databaseScope.run({ reason: 'auth' }, async () => await work(tx)),
+  async lookupAuthContext(email: string): Promise<AuthLookupRow | null> {
+    const rows = await this.#client.$transaction(async (tx) =>
+      databaseScope.run(
+        { reason: 'auth' },
+        async () =>
+          await tx.$queryRaw<AuthLookupRow[]>`SELECT * FROM app_auth_lookup(${email})`,
+      ),
     );
+    return rows[0] ?? null;
   }
 
   async onModuleDestroy(): Promise<void> {

@@ -96,8 +96,11 @@ model Question {
   // position is CHECKed to 1..3 in the migration; with this unique that caps a
   // survey at three questions structurally, with no counting in the service.
   @@unique([surveyId, position])
-  // Target of the answers FK that pins an answer's value column to the question type.
-  @@unique([id, type])
+  // Target of the answers FK. Three columns, not two: the answer's value column
+  // must match the question's type AND the question must belong to the answer's
+  // organization. Binding only the type let an answer in one tenant reference a
+  // question in another.
+  @@unique([id, type, orgId])
   @@map("questions")
 }
 
@@ -131,7 +134,7 @@ model Answer {
 
   org      Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   response Response     @relation(fields: [responseId, orgId], references: [id, orgId], onDelete: Cascade)
-  question Question     @relation(fields: [questionId, questionType], references: [id, type])
+  question Question     @relation(fields: [questionId, questionType, orgId], references: [id, type, orgId])
 
   @@unique([responseId, questionId])
   @@map("answers")

@@ -83,9 +83,15 @@ async function seedOrg(
       [managerId, orgId, `mgr@${name.toLowerCase()}.test`, `Manager ${name}`],
     );
     for (const title of titles) {
+      // A question per survey: surveys_require_questions is a deferred
+      // constraint, so a survey committed without one is rejected.
       await owner.query(
-        `INSERT INTO surveys (org_id, title, status, created_by)
-         VALUES ($1, $2, 'active', $3)`,
+        `WITH s AS (
+           INSERT INTO surveys (org_id, title, status, created_by)
+           VALUES ($1, $2, 'active', $3) RETURNING id
+         )
+         INSERT INTO questions (survey_id, org_id, text, type, position)
+         SELECT s.id, $1, 'How was your week?', 'rating', 1 FROM s`,
         [orgId, title, managerId],
       );
     }
@@ -94,6 +100,7 @@ async function seedOrg(
 
 async function dropOrg(orgId: string): Promise<void> {
   await withOrg(owner, orgId, async () => {
+    await owner.query('DELETE FROM questions WHERE org_id = $1', [orgId]);
     await owner.query('DELETE FROM surveys WHERE org_id = $1', [orgId]);
     await owner.query('DELETE FROM users WHERE org_id = $1', [orgId]);
     await owner.query('DELETE FROM organizations WHERE id = $1', [orgId]);
