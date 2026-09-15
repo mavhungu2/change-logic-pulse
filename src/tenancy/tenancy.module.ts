@@ -1,8 +1,19 @@
 import { Module } from '@nestjs/common';
 import { PostgresAuthDirectory } from './auth-directory.js';
 import { PrismaIdentityReader } from './identity.repository.js';
+import { PrismaResponseRepository } from './response.repository.js';
+import { PrismaSummaryRepository } from './summary.repository.js';
+import { PrismaSurveyRepository } from './survey.repository.js';
 import { TenantDb } from './tenant-db.js';
-import { AUTH_DIRECTORY, IDENTITY_READER } from './tokens.js';
+import {
+  ACTIVE_SURVEY_READER,
+  AUTH_DIRECTORY,
+  IDENTITY_READER,
+  RESPONSE_SUBMISSION,
+  SUMMARY_REPORTING,
+  SURVEY_AUTHORING,
+  SURVEY_CATALOGUE,
+} from './tokens.js';
 
 /**
  * Exports repositories and nothing else.
@@ -16,9 +27,27 @@ import { AUTH_DIRECTORY, IDENTITY_READER } from './tokens.js';
 @Module({
   providers: [
     TenantDb,
+    PrismaSurveyRepository,
+    PrismaResponseRepository,
     { provide: AUTH_DIRECTORY, useClass: PostgresAuthDirectory },
     { provide: IDENTITY_READER, useClass: PrismaIdentityReader },
+    { provide: ACTIVE_SURVEY_READER, useExisting: PrismaSurveyRepository },
+    { provide: SURVEY_CATALOGUE, useExisting: PrismaSurveyRepository },
+    { provide: SURVEY_AUTHORING, useExisting: PrismaSurveyRepository },
+    { provide: RESPONSE_SUBMISSION, useExisting: PrismaResponseRepository },
+    { provide: SUMMARY_REPORTING, useClass: PrismaSummaryRepository },
   ],
-  exports: [AUTH_DIRECTORY, IDENTITY_READER],
+  exports: [
+    AUTH_DIRECTORY,
+    IDENTITY_READER,
+    ACTIVE_SURVEY_READER,
+    SURVEY_CATALOGUE,
+    SURVEY_AUTHORING,
+    RESPONSE_SUBMISSION,
+    SUMMARY_REPORTING,
+    // Exported for the 409 body only: the controller needs the existing
+    // response's timestamp, which is not part of any contract interface.
+    PrismaResponseRepository,
+  ],
 })
 export class TenancyModule {}

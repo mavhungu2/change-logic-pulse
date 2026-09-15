@@ -6,3 +6,8 @@
  */
 export const AUTH_DIRECTORY = Symbol('AuthDirectory');
 export const IDENTITY_READER = Symbol('IdentityReader');
+export const ACTIVE_SURVEY_READER = Symbol('ActiveSurveyReader');
+export const SURVEY_CATALOGUE = Symbol('SurveyCatalogue');
+export const SURVEY_AUTHORING = Symbol('SurveyAuthoring');
+export const RESPONSE_SUBMISSION = Symbol('ResponseSubmission');
+export const SUMMARY_REPORTING = Symbol('SummaryReporting');

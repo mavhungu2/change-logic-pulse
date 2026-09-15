@@ -15,6 +15,7 @@
  */
 import 'dotenv/config';
 import { PrismaPg } from '@prisma/adapter-pg';
+import { weekStartOf } from '../src/common/week.js';
 import { PrismaClient } from '../src/generated/prisma/client.js';
 
 const url = process.env['MIGRATION_DATABASE_URL'];
@@ -29,6 +30,8 @@ interface OrgSpec {
   surveyId: string;
   surveyTitle: string;
   memberCount: number;
+  /** Members (1-based) who answered this week, and the rating they gave. */
+  respondents: readonly { member: number; rating: number; blocked: boolean; support: number }[];
 }
 
 const ORGS: readonly OrgSpec[] = [
@@ -39,6 +42,11 @@ const ORGS: readonly OrgSpec[] = [
     surveyId: '11111111-1111-4111-8111-5000000000a1',
     surveyTitle: 'Northwind weekly pulse',
     memberCount: 3,
+    // 2 of 3 members — the two orgs must show visibly different numbers.
+    respondents: [
+      { member: 1, rating: 4, blocked: false, support: 5 },
+      { member: 2, rating: 3, blocked: true, support: 3 },
+    ],
   },
   {
     id: '22222222-2222-4222-8222-222222222222',
@@ -47,6 +55,12 @@ const ORGS: readonly OrgSpec[] = [
     surveyId: '22222222-2222-4222-8222-5000000000b1',
     surveyTitle: 'Seabird weekly pulse',
     memberCount: 4,
+    // 3 of 4 members.
+    respondents: [
+      { member: 1, rating: 2, blocked: true, support: 2 },
+      { member: 2, rating: 1, blocked: true, support: 1 },
+      { member: 3, rating: 5, blocked: false, support: 4 },
+    ],
   },
 ];
 
@@ -128,9 +142,54 @@ async function seedOrg(org: OrgSpec): Promise<void> {
         },
       });
     }
+    // week_start comes from the one week utility the API uses, so the seed
+    // cannot disagree with the application about what week it is.
+    const weekStart = weekStartOf();
+
+    for (const respondent of org.respondents) {
+      const responseId = idFor(org, 200 + respondent.member);
+      const userId = idFor(org, respondent.member + 1);
+
+      await tx.response.upsert({
+        where: { id: responseId },
+        update: {},
+        create: {
+          id: responseId,
+          surveyId: org.surveyId,
+          userId,
+          orgId: org.id,
+          weekStart: new Date(`${weekStart}T00:00:00.000Z`),
+        },
+      });
+
+      const answers = [
+        { position: 1, type: 'rating' as const, ratingValue: respondent.rating, boolValue: null },
+        { position: 2, type: 'yes_no' as const, ratingValue: null, boolValue: respondent.blocked },
+        { position: 3, type: 'rating' as const, ratingValue: respondent.support, boolValue: null },
+      ];
+      for (const answer of answers) {
+        await tx.answer.upsert({
+          where: {
+            responseId_questionId: { responseId, questionId: idFor(org, 100 + answer.position) },
+          },
+          update: { ratingValue: answer.ratingValue, boolValue: answer.boolValue },
+          create: {
+            responseId,
+            questionId: idFor(org, 100 + answer.position),
+            orgId: org.id,
+            questionType: answer.type,
+            ratingValue: answer.ratingValue,
+            boolValue: answer.boolValue,
+          },
+        });
+      }
+    }
   });
 
-  console.log(`seeded ${org.name}: 1 manager, ${org.memberCount} members, 1 active survey`);
+  console.log(
+    `seeded ${org.name}: 1 manager, ${org.memberCount} members, 1 active survey, ` +
+      `${org.respondents.length} responses this week`,
+  );
 }
 
 async function main(): Promise<void> {
