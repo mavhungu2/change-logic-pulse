@@ -387,13 +387,18 @@ Reports: what changed, why, trade-offs, risks and follow-ups.
 
 ### Lana — testing
 
-| Owns | `test/**`, exclusively |
+| Owns | `test/**` and `scripts/verify-rls-proof.sh`, exclusively |
 |---|---|
 
 Writes the suite in §7, with the RLS proof harness as the priority — it must connect as
 `app_user` and bypass the application entirely. Lana also performs the
 disable-a-policy-and-confirm-the-test-fails check; a test that passes against broken RLS
 is the single most dangerous artifact this project can produce.
+
+That check is automated as `npm run test:rls-mutation`. It breaks each tenant table's
+`SELECT` policy in turn, requires the suite to fail every time, and exits non-zero on any
+mutation that goes undetected. Run it after touching a policy or adding a tenant table —
+it is the only thing that can tell you the suite still means something.
 
 Lana tests behaviour, not implementation detail. If production code is hard to test,
 Lana proposes the minimal refactor and hands it to whoever owns those files.

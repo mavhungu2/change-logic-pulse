@@ -23,6 +23,16 @@ const ORG_B = '0b000000-0000-4000-8000-00000000000b';
 const MGR_A = '0a000000-0000-4000-8000-00000000aa01';
 const MGR_B = '0b000000-0000-4000-8000-00000000bb01';
 
+/** Every table that carries tenant data. A new one belongs here and in the migration. */
+const TENANT_TABLES = [
+  'answers',
+  'organizations',
+  'questions',
+  'responses',
+  'surveys',
+  'users',
+] as const;
+
 /** Org A has two surveys and org B has one, so a leak is visible as a count. */
 const SURVEYS_A = ['A — alpha', 'A — beta'];
 const SURVEYS_B = ['B — only'];
@@ -135,39 +145,50 @@ describe('row-level security, as app_user, with no application code involved', (
     // Dropping a policy makes a table MORE restrictive, so the fails-closed tests
     // below still pass without it. Only this test notices a table that has lost
     // its policies, or a new table that never got any.
-    const { rows } = await appUser.query<{
+    //
+    // It asserts policy *identity*, not just that each command is covered
+    // somewhere: users carries a second, deliberately permissive SELECT policy
+    // for the login lookup, so counting distinct commands would report SELECT as
+    // covered even with users_select gone — on the one table where that matters
+    // most. The expected set is exhaustive, so a rogue policy fails it too.
+    const { rows: flags } = await appUser.query<{
       table_name: string;
       enabled: boolean;
       forced: boolean;
-      commands: string | null;
     }>(`
-      SELECT c.relname              AS table_name,
-             c.relrowsecurity       AS enabled,
-             c.relforcerowsecurity  AS forced,
-             (SELECT string_agg(DISTINCT p.cmd, ',' ORDER BY p.cmd)
-                FROM pg_policies p
-               WHERE p.schemaname = 'public' AND p.tablename = c.relname) AS commands
-      FROM pg_class c
-      WHERE c.relnamespace = 'public'::regnamespace
-        AND c.relkind = 'r'
-        AND c.relname <> '_prisma_migrations'
-      ORDER BY c.relname
+      SELECT relname AS table_name, relrowsecurity AS enabled, relforcerowsecurity AS forced
+      FROM pg_class
+      WHERE relnamespace = 'public'::regnamespace
+        AND relkind = 'r' AND relname <> '_prisma_migrations'
+      ORDER BY relname
     `);
 
-    expect(rows.map((r) => r.table_name)).toEqual([
-      'answers',
-      'organizations',
-      'questions',
-      'responses',
-      'surveys',
-      'users',
-    ]);
-
-    for (const row of rows) {
+    expect(flags.map((r) => r.table_name)).toEqual([...TENANT_TABLES]);
+    for (const row of flags) {
       expect(row.enabled, `${row.table_name}: ENABLE ROW LEVEL SECURITY`).toBe(true);
       expect(row.forced, `${row.table_name}: FORCE ROW LEVEL SECURITY`).toBe(true);
-      expect(row.commands, `${row.table_name}: all four commands covered`).toBe(
-        'DELETE,INSERT,SELECT,UPDATE',
+    }
+
+    const { rows: policies } = await appUser.query<{
+      policyname: string;
+      tablename: string;
+      expression: string | null;
+    }>(`
+      SELECT policyname, tablename, coalesce(qual, with_check) AS expression
+      FROM pg_policies WHERE schemaname = 'public'
+    `);
+
+    const expected = TENANT_TABLES.flatMap((table) =>
+      ['select', 'insert', 'update', 'delete'].map((cmd) => `${table}_${cmd}`),
+    );
+    expect(policies.map((p) => p.policyname).sort()).toEqual(
+      [...expected, 'users_auth_lookup'].sort(),
+    );
+
+    for (const name of expected) {
+      const policy = policies.find((p) => p.policyname === name);
+      expect(policy?.expression, `${name}: must scope by tenant`).toContain(
+        'app_current_org_id',
       );
     }
   });

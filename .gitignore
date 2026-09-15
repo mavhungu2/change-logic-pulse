@@ -13,3 +13,6 @@ src/generated/
 
 .DS_Store
 *.log
+
+# Transient marker from scripts/verify-rls-proof.sh
+.rls-mutation-state
