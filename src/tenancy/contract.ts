@@ -219,3 +219,22 @@ export interface TenancyError extends Error {
 
 /** The tenancy module exports a guard of this type. */
 export type IsTenancyError = (error: unknown) => error is TenancyError;
+
+// ── Identity ───────────────────────────────────────────────────────────────
+
+export interface MeView {
+  readonly userId: UserId;
+  readonly name: string;
+  readonly email: string;
+  readonly role: Role;
+  readonly org: {
+    readonly id: OrgId;
+    readonly name: string;
+    readonly logoUrl: string | null;
+  };
+}
+
+export interface IdentityReader {
+  /** The signed-in user and their organization. `null` if the user is gone. */
+  findMe(): Promise<MeView | null>;
+}
