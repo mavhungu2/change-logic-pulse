@@ -3,72 +3,114 @@
  *
  * It writes to two organizations, which is exactly what row-level security
  * forbids for any single tenant context, so it scopes itself per organization
- * and inserts each one's data inside its own transaction. Nothing here bypasses
- * RLS: FORCE ROW LEVEL SECURITY applies to the owner too, so a missing
- * set_config would make these inserts fail rather than silently cross tenants.
+ * and writes each one inside its own transaction. Nothing here bypasses RLS:
+ * FORCE ROW LEVEL SECURITY applies to the owner too, so a missing set_config
+ * would make these inserts fail rather than quietly cross tenants.
  *
  * Creating the organization row is the one ordering subtlety: the tenant it
  * belongs to is itself, so the id is chosen here and the GUC is set to it before
  * the insert, which is what satisfies the WITH CHECK on organizations.
  *
- * Idempotent: fixed ids plus upsert, so re-running changes no row counts.
+ * IDEMPOTENCE — every upsert matches on the row's NATURAL key, never on a
+ * surrogate id:
+ *
+ *   organizations  id           (it is the tenant; the id is the identity)
+ *   users          email        UNIQUE(email)
+ *   questions      survey + position    UNIQUE(survey_id, position)
+ *   responses      survey + user + week UNIQUE(survey_id, user_id, week_start)
+ *   answers        response + question  UNIQUE(response_id, question_id)
+ *
+ * Matching on natural keys is what makes re-running safe in the case that
+ * actually bites: a member answers through the API, which mints a random uuid,
+ * and the seed then runs. Keyed on its own fixed id the seed would try to insert
+ * a second response for the same member and week and hit the unique constraint;
+ * keyed on (survey, user, week) it finds the row the API wrote and updates it.
+ * Re-running converges on the declared state rather than merely avoiding
+ * duplicates.
  */
 import 'dotenv/config';
-import { PrismaPg } from '@prisma/adapter-pg';
 import { weekStartOf } from '../src/common/week.js';
 import { PrismaClient } from '../src/generated/prisma/client.js';
+import { PrismaPg } from '@prisma/adapter-pg';
 
 const url = process.env['MIGRATION_DATABASE_URL'];
 if (!url) throw new Error('MIGRATION_DATABASE_URL is not set');
 
 const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: url }) });
 
-interface OrgSpec {
-  id: string;
-  name: string;
-  domain: string;
-  surveyId: string;
-  surveyTitle: string;
-  memberCount: number;
-  /** Members (1-based) who answered this week, and the rating they gave. */
-  respondents: readonly { member: number; rating: number; blocked: boolean; support: number }[];
+type Rating = 1 | 2 | 3 | 4 | 5;
+
+/** One member's answers to the three questions below. */
+interface Reply {
+  readonly member: number;
+  readonly week: Rating;
+  readonly blocked: boolean;
+  readonly support: Rating;
 }
 
+interface OrgSpec {
+  readonly id: string;
+  readonly name: string;
+  readonly domain: string;
+  readonly surveyTitle: string;
+  readonly memberCount: number;
+  readonly replies: readonly Reply[];
+}
+
+/** Both surveys use both question types, in the same order, per CLAUDE.md §6. */
+const QUESTIONS = [
+  { position: 1, type: 'rating' as const, text: 'How was your week?' },
+  { position: 2, type: 'yes_no' as const, text: 'Did anything block you?' },
+  { position: 3, type: 'rating' as const, text: 'How supported did you feel?' },
+];
+
+/**
+ * The two organizations are deliberately at opposite ends of every number, so
+ * that switching users in the demo cannot be mistaken for a cached screen:
+ *
+ *                     Northwind      Seabird
+ *   members               4             5
+ *   responded          4 (100%)      2 (40%)
+ *   avg "how was..."     4.75          1.5
+ *   blocked            0 yes / 4 no  2 yes / 0 no
+ */
 const ORGS: readonly OrgSpec[] = [
   {
     id: '11111111-1111-4111-8111-111111111111',
     name: 'Northwind Logistics',
     domain: 'northwind.test',
-    surveyId: '11111111-1111-4111-8111-5000000000a1',
     surveyTitle: 'Northwind weekly pulse',
-    memberCount: 3,
-    // 2 of 3 members — the two orgs must show visibly different numbers.
-    respondents: [
-      { member: 1, rating: 4, blocked: false, support: 5 },
-      { member: 2, rating: 3, blocked: true, support: 3 },
+    memberCount: 4,
+    replies: [
+      { member: 1, week: 5, blocked: false, support: 5 },
+      { member: 2, week: 4, blocked: false, support: 5 },
+      { member: 3, week: 5, blocked: false, support: 4 },
+      { member: 4, week: 5, blocked: false, support: 5 },
     ],
   },
   {
     id: '22222222-2222-4222-8222-222222222222',
     name: 'Seabird Studios',
     domain: 'seabird.test',
-    surveyId: '22222222-2222-4222-8222-5000000000b1',
     surveyTitle: 'Seabird weekly pulse',
-    memberCount: 4,
-    // 3 of 4 members.
-    respondents: [
-      { member: 1, rating: 2, blocked: true, support: 2 },
-      { member: 2, rating: 1, blocked: true, support: 1 },
-      { member: 3, rating: 5, blocked: false, support: 4 },
+    memberCount: 5,
+    replies: [
+      { member: 1, week: 2, blocked: true, support: 1 },
+      { member: 2, week: 1, blocked: true, support: 2 },
     ],
   },
 ];
 
-/** Deterministic uuid so re-running the seed reuses the same rows. */
-const idFor = (org: OrgSpec, slot: number): string =>
-  `${org.id.slice(0, 24)}${String(slot).padStart(12, '0')}`;
+/** Stable uuid for rows that have no natural key of their own (the survey). */
+const surveyIdFor = (org: OrgSpec): string => `${org.id.slice(0, 24)}5000000000a1`;
+
+const emailFor = (org: OrgSpec, slot: number): string =>
+  slot === 0 ? `manager@${org.domain}` : `member${slot}@${org.domain}`;
 
 async function seedOrg(org: OrgSpec): Promise<void> {
+  const weekStart = weekStartOf();
+  const surveyId = surveyIdFor(org);
+
   await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT set_config('app.current_org_id', ${org.id}, true)`;
 
@@ -78,125 +120,125 @@ async function seedOrg(org: OrgSpec): Promise<void> {
       create: { id: org.id, name: org.name },
     });
 
-    const managerId = idFor(org, 1);
-    await tx.user.upsert({
-      where: { id: managerId },
-      update: { email: `manager@${org.domain}`, name: `Manager (${org.name})`, role: 'manager' },
+    const manager = await tx.user.upsert({
+      where: { email: emailFor(org, 0) },
+      update: { name: `Ada Manager (${org.name})`, role: 'manager' },
       create: {
-        id: managerId,
         orgId: org.id,
-        email: `manager@${org.domain}`,
-        name: `Manager (${org.name})`,
+        email: emailFor(org, 0),
+        name: `Ada Manager (${org.name})`,
         role: 'manager',
       },
+      select: { id: true },
     });
 
-    for (let slot = 2; slot <= org.memberCount + 1; slot += 1) {
-      const memberId = idFor(org, slot);
-      await tx.user.upsert({
-        where: { id: memberId },
-        update: {
-          email: `member${slot - 1}@${org.domain}`,
-          name: `Member ${slot - 1} (${org.name})`,
-          role: 'member',
-        },
+    const memberIds = new Map<number, string>();
+    for (let slot = 1; slot <= org.memberCount; slot += 1) {
+      const member = await tx.user.upsert({
+        where: { email: emailFor(org, slot) },
+        update: { name: `Member ${slot} (${org.name})`, role: 'member' },
         create: {
-          id: memberId,
           orgId: org.id,
-          email: `member${slot - 1}@${org.domain}`,
-          name: `Member ${slot - 1} (${org.name})`,
+          email: emailFor(org, slot),
+          name: `Member ${slot} (${org.name})`,
           role: 'member',
         },
+        select: { id: true },
       });
+      memberIds.set(slot, member.id);
     }
 
     await tx.survey.upsert({
-      where: { id: org.surveyId },
-      update: { title: org.surveyTitle },
+      where: { id: surveyId },
+      update: { title: org.surveyTitle, status: 'active' },
       create: {
-        id: org.surveyId,
+        id: surveyId,
         orgId: org.id,
         title: org.surveyTitle,
         status: 'active',
-        createdBy: managerId,
+        createdBy: manager.id,
       },
     });
 
-    const questions = [
-      { text: 'How was your week?', type: 'rating' as const, position: 1 },
-      { text: 'Did anything block you?', type: 'yes_no' as const, position: 2 },
-      { text: 'How supported did you feel?', type: 'rating' as const, position: 3 },
-    ];
-    for (const question of questions) {
-      const questionId = idFor(org, 100 + question.position);
-      await tx.question.upsert({
-        where: { id: questionId },
-        update: { text: question.text },
+    const questionIds = new Map<number, string>();
+    for (const question of QUESTIONS) {
+      const row = await tx.question.upsert({
+        where: { surveyId_position: { surveyId, position: question.position } },
+        update: { text: question.text, type: question.type },
         create: {
-          id: questionId,
-          surveyId: org.surveyId,
+          surveyId,
           orgId: org.id,
           text: question.text,
           type: question.type,
           position: question.position,
         },
+        select: { id: true },
       });
+      questionIds.set(question.position, row.id);
     }
-    // week_start comes from the one week utility the API uses, so the seed
-    // cannot disagree with the application about what week it is.
-    const weekStart = weekStartOf();
 
-    for (const respondent of org.respondents) {
-      const responseId = idFor(org, 200 + respondent.member);
-      const userId = idFor(org, respondent.member + 1);
+    for (const reply of org.replies) {
+      const userId = memberIds.get(reply.member);
+      if (!userId) throw new Error(`${org.name}: reply for member ${reply.member}, who has none`);
 
-      await tx.response.upsert({
-        where: { id: responseId },
+      const response = await tx.response.upsert({
+        where: {
+          surveyId_userId_weekStart: {
+            surveyId,
+            userId,
+            weekStart: new Date(`${weekStart}T00:00:00.000Z`),
+          },
+        },
         update: {},
         create: {
-          id: responseId,
-          surveyId: org.surveyId,
+          surveyId,
           userId,
           orgId: org.id,
           weekStart: new Date(`${weekStart}T00:00:00.000Z`),
         },
+        select: { id: true },
       });
 
-      const answers = [
-        { position: 1, type: 'rating' as const, ratingValue: respondent.rating, boolValue: null },
-        { position: 2, type: 'yes_no' as const, ratingValue: null, boolValue: respondent.blocked },
-        { position: 3, type: 'rating' as const, ratingValue: respondent.support, boolValue: null },
+      const values: readonly { position: number; rating: Rating | null; bool: boolean | null }[] = [
+        { position: 1, rating: reply.week, bool: null },
+        { position: 2, rating: null, bool: reply.blocked },
+        { position: 3, rating: reply.support, bool: null },
       ];
-      for (const answer of answers) {
+
+      for (const value of values) {
+        const questionId = questionIds.get(value.position)!;
+        const question = QUESTIONS.find((q) => q.position === value.position)!;
         await tx.answer.upsert({
-          where: {
-            responseId_questionId: { responseId, questionId: idFor(org, 100 + answer.position) },
-          },
-          update: { ratingValue: answer.ratingValue, boolValue: answer.boolValue },
+          where: { responseId_questionId: { responseId: response.id, questionId } },
+          update: { ratingValue: value.rating, boolValue: value.bool },
           create: {
-            responseId,
-            questionId: idFor(org, 100 + answer.position),
+            responseId: response.id,
+            questionId,
             orgId: org.id,
-            questionType: answer.type,
-            ratingValue: answer.ratingValue,
-            boolValue: answer.boolValue,
+            questionType: question.type,
+            ratingValue: value.rating,
+            boolValue: value.bool,
           },
         });
       }
     }
   });
 
+  const rate = Math.round((org.replies.length / org.memberCount) * 100);
   console.log(
-    `seeded ${org.name}: 1 manager, ${org.memberCount} members, 1 active survey, ` +
-      `${org.respondents.length} responses this week`,
+    `  ${org.name.padEnd(22)} ${org.memberCount} members, ` +
+      `${org.replies.length} responded this week (${rate}%)`,
   );
 }
 
 async function main(): Promise<void> {
+  console.log(`seeding week starting ${weekStartOf()}\n`);
   for (const org of ORGS) await seedOrg(org);
-  console.log('\nlog in with any seeded email, e.g.:');
+
+  console.log('\nsign in with any of these (no password):');
   for (const org of ORGS) {
-    console.log(`  manager@${org.domain}   member1@${org.domain}`);
+    console.log(`  ${emailFor(org, 0).padEnd(28)} manager`);
+    console.log(`  ${emailFor(org, 1).padEnd(28)} member`);
   }
 }
 

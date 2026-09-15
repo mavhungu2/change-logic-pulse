@@ -21,6 +21,8 @@ let app: INestApplication;
 let managerA = '';
 let memberA = '';
 let memberB = '';
+/** Read from the database, so the test does not hard-code the seed's numbers. */
+let memberCountA = 0;
 const createdSurveys: string[] = [];
 
 const login = async (email: string): Promise<string> => {
@@ -64,6 +66,15 @@ beforeAll(async () => {
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
   app = moduleRef.createNestApplication();
   await app.init();
+
+  const owner = new PrismaClient({
+    adapter: new PrismaPg({ connectionString: process.env['MIGRATION_DATABASE_URL']! }),
+  });
+  memberCountA = await owner.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT set_config('app.current_org_id', ${ORG_A}, true)`;
+    return await tx.user.count({ where: { role: 'member' } });
+  });
+  await owner.$disconnect();
 
   managerA = await login('manager@northwind.test');
   memberA = await login('member1@northwind.test');
@@ -217,9 +228,12 @@ describe('the weekly summary', () => {
 
     expect(summary.body.weekStart).toBe(weekStartOf());
     expect(summary.body.completedCount).toBe(1);
-    // Northwind seeds three members; managers are not part of the denominator.
-    expect(summary.body.eligibleCount).toBe(3);
-    expect(summary.body.completionRate).toBeCloseTo(1 / 3, 3);
+    // The denominator is members only — managers author surveys, they are not
+    // the responding population. Counted from the database rather than assumed,
+    // so re-balancing the seed does not silently change what this asserts.
+    expect(summary.body.eligibleCount).toBe(memberCountA);
+    expect(summary.body.eligibleCount).toBeGreaterThanOrEqual(3);
+    expect(summary.body.completionRate).toBeCloseTo(1 / memberCountA, 3);
     expect(summary.body.questions).toEqual([
       { id: questionIds[0], type: 'rating', average: 4, count: 1 },
       { id: questionIds[1], type: 'yes_no', counts: { yes: 1, no: 0 } },

@@ -15,6 +15,15 @@ cp .env.example .env
 npm install
 npm --prefix web install
 npm run db:up          # PostgreSQL 18 on host port 5433
+npx prisma migrate deploy
+npm run db:seed        # two organizations, safe to re-run
+```
+
+The seed prints the addresses to sign in with — there are no passwords:
+
+```
+manager@northwind.test   member1@northwind.test    Northwind Logistics — 4 members, 100% responded
+manager@seabird.test     member1@seabird.test      Seabird Studios     — 5 members,  40% responded
 ```
 
 Then, in two terminals:
@@ -106,4 +115,7 @@ npm run db:up            # start PostgreSQL
 npm run db:down          # stop it, keeping data
 npm run db:nuke          # stop it and delete the volume (re-runs the role setup)
 npm run prisma:migrate   # create/apply a migration as pulse_owner
+npm run db:seed          # idempotent; re-running converges rather than duplicating
+npm run test:e2e         # RLS proof, bypass attempts, endpoint behaviour
+npm run test:rls-mutation  # breaks each policy in turn and requires the suite to fail
 ```
