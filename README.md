@@ -1,11 +1,12 @@
 # Multi-Tenant Pulse Surveys
 
-Skeleton only — no domain logic yet. See [CLAUDE.md](./CLAUDE.md) for the constraints
-this project is built under.
+Weekly pulse surveys for multiple organizations, isolated by PostgreSQL row-level
+security. [CLAUDE.md](./CLAUDE.md) holds the constraints this was built under;
+[SOLUTION.md](./SOLUTION.md) has the design, the trade-offs and the known gaps.
 
 ## Prerequisites
 
-- Node.js 20+ (developed on 25.1.0)
+- Node.js — tested on 25.1.0. Nothing older has been exercised.
 - Docker Desktop
 
 ## Run locally from a clean clone
@@ -14,10 +15,16 @@ this project is built under.
 cp .env.example .env
 npm install
 npm --prefix web install
+npx prisma generate    # writes src/generated/ — not in git, and not created by npm install
 npm run db:up          # PostgreSQL 18 on host port 5433
 npx prisma migrate deploy
 npm run db:seed        # two organizations, safe to re-run
 ```
+
+`prisma generate` is a real step, not a formality: the client is generated into
+`src/generated/` which is gitignored, `npm install` does not create it, and
+`migrate deploy` does not either. Skip it and the seed fails with
+`ERR_MODULE_NOT_FOUND`.
 
 The seed prints the addresses to sign in with — there are no passwords:
 
@@ -33,7 +40,16 @@ npm run start:dev      # API on http://localhost:3000
 npm run web:dev        # React app on http://localhost:5173
 ```
 
-The API currently exposes no routes, so `/` returns 404. That is expected.
+Open http://localhost:5173 and sign in as any seeded user — no password. Managers
+land on the weekly summary, members on the surveys they can answer. Switching
+between the two organizations is the quickest way to see the isolation: 100%
+completion and an average of 4.75 against 40% and 1.5.
+
+> **`.env.example` ships a working `JWT_SECRET`,** so a clone runs without editing
+> anything. It is committed, therefore public, therefore not a secret — generate
+> your own with `openssl rand -base64 48` before this goes anywhere real. The API
+> refuses to start without one and rejects the known placeholders, but it cannot
+> know that a value you copied from a public repository is shared.
 
 > **Host port 5433, not 5432.** A natively installed PostgreSQL commonly holds 5432.
 > Override with `POSTGRES_HOST_PORT` in `.env` if 5433 is taken as well.
@@ -46,6 +62,7 @@ web/            React app (Vite)
 prisma/         schema; migrations land here
 docker/initdb/  database role setup, run once on first boot
 test/           test suite
+scripts/        verify-rls-proof.sh — breaks each policy and requires the tests to fail
 ```
 
 ## Database roles
@@ -119,3 +136,8 @@ npm run db:seed          # idempotent; re-running converges rather than duplicat
 npm run test:e2e         # RLS proof, bypass attempts, endpoint behaviour
 npm run test:rls-mutation  # breaks each policy in turn and requires the suite to fail
 ```
+
+`npm test` is pure unit tests and needs nothing running. `npm run test:e2e` and
+`npm run test:rls-mutation` both need the database **up, migrated and seeded** —
+they sign in as seeded users, so against an empty database three of the five
+suites fail, and only one of them says why.
