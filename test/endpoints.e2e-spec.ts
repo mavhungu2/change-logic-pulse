@@ -471,6 +471,59 @@ describe('a manager manages the surveys their organization owns', () => {
       .expect(400);
   });
 
+  it('creates a survey as a draft when asked, and members are not offered it', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/surveys')
+      .set(auth(managerA))
+      .send({
+        title: 'Draft probe',
+        status: 'draft',
+        questions: [{ text: 'Not live yet', type: 'rating' }],
+      })
+      .expect(201);
+
+    const id = created.body.id as string;
+    createdSurveys.push(id);
+
+    const listed = await request(app.getHttpServer())
+      .get('/surveys')
+      .set(auth(managerA))
+      .expect(200);
+    expect((listed.body as { id: string; status: string }[]).find((s) => s.id === id)?.status).toBe(
+      'draft',
+    );
+
+    const before = await request(app.getHttpServer())
+      .get('/surveys/active')
+      .set(auth(memberA))
+      .expect(200);
+    expect((before.body as { id: string }[]).map((s) => s.id)).not.toContain(id);
+
+    // Publishing is the one-way door. Going back is covered above: 400 at the
+    // edge, and a BEFORE UPDATE trigger underneath it.
+    await request(app.getHttpServer())
+      .patch(`/surveys/${id}`)
+      .set(auth(managerA))
+      .send({ status: 'active' })
+      .expect(200);
+
+    const after = await request(app.getHttpServer())
+      .get('/surveys/active')
+      .set(auth(memberA))
+      .expect(200);
+    expect((after.body as { id: string }[]).map((s) => s.id)).toContain(id);
+  });
+
+  it('refuses to create a survey in a status it cannot be created in', async () => {
+    for (const status of ['archived', 'nonsense', 3, null]) {
+      await request(app.getHttpServer())
+        .post('/surveys')
+        .set(auth(managerA))
+        .send({ title: 'Bad status probe', status, questions: [{ text: 'x', type: 'rating' }] })
+        .expect(400);
+    }
+  });
+
   it('refuses an id that is not a uuid, rather than failing in the driver', async () => {
     await request(app.getHttpServer())
       .patch('/surveys/not-a-uuid')

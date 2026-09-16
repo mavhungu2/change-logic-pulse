@@ -89,7 +89,7 @@ export class PrismaSurveyRepository
 
     return this.db.run(async (tx) => {
       const survey = await tx.survey.create({
-        data: { orgId, title: draft.title, status: 'active', createdBy: userId },
+        data: { orgId, title: draft.title, status: draft.status, createdBy: userId },
         select: { id: true },
       });
 

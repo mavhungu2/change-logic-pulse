@@ -55,7 +55,7 @@ GET  /me                            current user + org + role
 GET  /surveys/active                Member: ALL of org's active surveys + questions
 POST /surveys/:id/responses         Member: submit; 409 if already answered this week
 
-POST /surveys                       Manager: create (≤3 questions)
+POST /surveys                       Manager: create (≤3 questions) — {status: draft|active}, default active
 GET  /surveys                       Manager: own org's surveys
 PATCH /surveys/:id                  Manager: close or reopen — {status: active|archived}
 GET  /surveys/:id/summary?week=YYYY-MM-DD   Manager: weekly rollup

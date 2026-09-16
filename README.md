@@ -65,9 +65,10 @@ between the two organizations is the quickest way to see the isolation: 100%
 completion and an average of 4.75 against 40% and 1.5.
 
 Creating and closing surveys are API-only on purpose — the two screens in the
-brief were finished instead. `POST /surveys` creates one, and `PATCH /surveys/:id`
-with `{"status":"archived"}` closes it, after which members are no longer offered
-it and the summary stays readable. Both are covered in `test/endpoints.e2e-spec.ts`
+brief were finished instead. `POST /surveys` creates one — active by default, or
+`{"status":"draft"}` to hold it back until you publish it — and `PATCH
+/surveys/:id` with `{"status":"archived"}` closes it, after which members are no
+longer offered it and the summary stays readable. Both are covered in `test/endpoints.e2e-spec.ts`
 if you would rather read the behaviour than curl it.
 
 > **`.env.example` carries no signing key.** Copying it by hand leaves

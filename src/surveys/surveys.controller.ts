@@ -15,6 +15,7 @@ import { Roles } from '../auth/roles.decorator.js';
 import type {
   ActiveSurvey,
   ActiveSurveyReader,
+  CreatableSurveyStatus,
   ManagedSurveyStatus,
   NewQuestion,
   NewSurvey,
@@ -34,6 +35,8 @@ import {
 const QUESTION_TYPES: readonly QuestionType[] = ['rating', 'yes_no'];
 /** 'draft' is a real status and deliberately not a destination — see the contract. */
 const MANAGED_STATUSES: readonly ManagedSurveyStatus[] = ['active', 'archived'];
+/** ...but it is a starting point, and this is the only way to reach it. */
+const CREATABLE_STATUSES: readonly CreatableSurveyStatus[] = ['draft', 'active'];
 
 function parseStatusChange(body: unknown): ManagedSurveyStatus {
   const change = body as { status?: unknown } | null;
@@ -45,10 +48,22 @@ function parseStatusChange(body: unknown): ManagedSurveyStatus {
 }
 
 function parseNewSurvey(body: unknown): NewSurvey {
-  const draft = body as { title?: unknown; questions?: unknown } | null;
+  const draft = body as { title?: unknown; status?: unknown; questions?: unknown } | null;
 
   const title = typeof draft?.title === 'string' ? draft.title.trim() : '';
   if (title === '') throw new BadRequestException('title is required');
+
+  // Absent means 'active'. Absent is `undefined` and nothing else: `?? 'active'`
+  // would also swallow an explicit null, and an explicit value is checked rather
+  // than coerced here — a typo that silently published a survey meant to stay a
+  // draft is the one failure this field can cause.
+  const status = draft?.status === undefined ? 'active' : draft.status;
+  if (!CREATABLE_STATUSES.includes(status as CreatableSurveyStatus)) {
+    throw new BadRequestException(
+      `status must be one of: ${CREATABLE_STATUSES.join(', ')}. ` +
+        'A survey cannot be created archived, and cannot return to draft once it leaves it.',
+    );
+  }
 
   if (!Array.isArray(draft?.questions) || draft.questions.length === 0) {
     throw new BadRequestException('questions must be a non-empty array');
@@ -73,7 +88,7 @@ function parseNewSurvey(body: unknown): NewSurvey {
     return { text, type: question?.type as QuestionType, position: (index + 1) as 1 | 2 | 3 };
   });
 
-  return { title, questions };
+  return { title, status: status as CreatableSurveyStatus, questions };
 }
 
 @Controller('surveys')

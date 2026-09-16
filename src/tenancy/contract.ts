@@ -60,6 +60,17 @@ export type SurveyStatus = 'draft' | 'active' | 'archived';
  * it is not what makes the rule true.
  */
 export type ManagedSurveyStatus = Extract<SurveyStatus, 'active' | 'archived'>;
+
+/**
+ * The statuses a survey may be *created* in.
+ *
+ * The mirror image of ManagedSurveyStatus: `archived` is missing because
+ * creating a survey already closed is not a thing anyone wants, and `draft` is
+ * here because it is the only way to reach it. The two types together say that
+ * `draft` is an insert-time state — entered on creation, never returned to —
+ * which is precisely what the BEFORE UPDATE trigger enforces in the database.
+ */
+export type CreatableSurveyStatus = Extract<SurveyStatus, 'draft' | 'active'>;
 export type QuestionType = 'rating' | 'yes_no';
 
 /**
@@ -138,6 +149,12 @@ export interface NewQuestion {
 
 export interface NewSurvey {
   readonly title: string;
+  /**
+   * Defaults to `active` at the edge, because a survey nobody can answer is the
+   * less useful default for a demo. `draft` is the alternative, and the only
+   * route to that status: nothing may move a survey back to it afterwards.
+   */
+  readonly status: CreatableSurveyStatus;
   /** One to three. The database enforces the ceiling independently. */
   readonly questions: readonly NewQuestion[];
 }
