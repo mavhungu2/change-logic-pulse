@@ -28,6 +28,15 @@ describe('S2 — the signing secret must never have a fallback', () => {
     expect(() => requireJwtSecret()).toThrow(/placeholder|example/i);
   });
 
+  it('refuses the generated-looking key that .env.example used to ship', () => {
+    // The dangerous placeholder is the one that does not look like a
+    // placeholder: it clears the length rule and reads as a real key, so only
+    // an explicit entry in the blocklist stops it.
+    process.env['JWT_SECRET'] =
+      '+Ke2p0lOwHSSjWPiot3eoyaDez7/tNAtwVvb3jrjvShnSQJ/LdjQbqlm3Sqg1W2e';
+    expect(() => requireJwtSecret()).toThrow(/placeholder|example/i);
+  });
+
   it('accepts a secret that is set and long enough', () => {
     process.env['JWT_SECRET'] = 'a'.repeat(32);
     expect(requireJwtSecret()).toBe('a'.repeat(32));

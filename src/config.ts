@@ -11,6 +11,12 @@ const PUBLISHED_PLACEHOLDERS: ReadonlySet<string> = new Set([
   'dev-only-insecure-secret',
   'change-me',
   'secret',
+  // Shipped in .env.example until it was replaced with an empty value. Anyone
+  // who copied that file, or reads it out of git history, holds this string —
+  // which is the whole definition of a secret that no longer is one. A
+  // generated-looking key is the dangerous case: it clears the length rule and
+  // looks nothing like a placeholder.
+  '+Ke2p0lOwHSSjWPiot3eoyaDez7/tNAtwVvb3jrjvShnSQJ/LdjQbqlm3Sqg1W2e',
 ]);
 
 const MINIMUM_SECRET_LENGTH = 32;

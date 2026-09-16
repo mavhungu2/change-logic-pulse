@@ -12,7 +12,7 @@ security. [CLAUDE.md](./CLAUDE.md) holds the constraints this was built under;
 ## Run locally from a clean clone
 
 ```bash
-cp .env.example .env
+npm run env:init       # writes .env with a generated JWT_SECRET
 npm install
 npm --prefix web install
 npx prisma generate    # writes src/generated/ — not in git, and not created by npm install
@@ -20,6 +20,11 @@ npm run db:up          # PostgreSQL 18 on host port 5433
 npx prisma migrate deploy
 npm run db:seed        # two organizations, safe to re-run
 ```
+
+`env:init` generates the signing key rather than copying one. `.env.example`
+carries `JWT_SECRET=""` on purpose: a working key in a committed file is a
+published key, and [`src/config.ts`](./src/config.ts) refuses every key that has
+ever been published here — including the one this file used to ship.
 
 `prisma generate` is a real step, not a formality: the client is generated into
 `src/generated/` which is gitignored, `npm install` does not create it, and
