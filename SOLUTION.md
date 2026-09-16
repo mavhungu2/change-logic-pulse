@@ -297,9 +297,12 @@ local username and the injected reminders are stripped, each replaced in place
 with a marker so that no omission is silent. Prompts and tool *inputs* — where
 the code under review actually appears — are complete and unedited; tool
 *output* over 2,000 characters is truncated with the omitted length recorded.
-The local development credentials stay in, because they are already published in
-`.env.example` and only ever reach a container on localhost. `ai-logs/README.md`
-says all of this in the folder itself.
+The local development credentials stay in: the database password is in
+`.env.example` and only ever reaches a container on localhost, and the signing
+key visible there is the one `.env.example` shipped at the time — since removed,
+so it now sits in this repository's git history and in the blocklist
+`src/config.ts` checks at startup. `ai-logs/README.md` says all of this in the
+folder itself.
 
 **Before any of it.** `ai-logs/00-runbook.md` is the plan, written two days
 before the first commit: a phase per commit, the prompt for each, a checklist to
