@@ -279,6 +279,22 @@ interactively turn by turn. Alongside it: a live PostgreSQL in Docker used as an
 oracle rather than a deployment target, and browser automation to drive the React
 flows and read the accessibility tree.
 
+**The transcript.** `ai-logs/01-build-session.md` is that session, exported from
+the tool's own session file: 26 prompts over two days, with every tool call and
+its result. A false start preceded it — the same opening prompt, interrupted
+after about thirty seconds — which produced nothing and is not included.
+
+It is redacted, and visibly so. The tool injects a memory index and reads local
+config at startup, which pulled in unrelated client and personal work, and two
+early directory listings enumerated a home folder. Those, absolute paths, the
+local username and the injected reminders are stripped, each replaced in place
+with a marker so that no omission is silent. Prompts and tool *inputs* — where
+the code under review actually appears — are complete and unedited; tool
+*output* over 2,000 characters is truncated with the omitted length recorded.
+The local development credentials stay in, because they are already published in
+`.env.example` and only ever reach a container on localhost. `ai-logs/README.md`
+says all of this in the folder itself.
+
 **How the work was broken down.** `CLAUDE.md` fixes constraints and settles the
 decisions the brief left open. `SPEC.md` is the checkable plan — schema,
 endpoints, build order, cut list. Both were committed *before* any implementation
