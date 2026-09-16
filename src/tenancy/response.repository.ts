@@ -4,6 +4,7 @@ import type {
   ResponseId,
   ResponseSubmission,
   SubmitResponse,
+  SurveyId,
 } from './contract.js';
 import { tenantContext } from './tenant-context.js';
 import { TenantDb } from './tenant-db.js';
@@ -101,7 +102,7 @@ export class PrismaResponseRepository implements ResponseSubmission {
   }
 
   /** When the response was recorded, for the 409 body. */
-  async findSubmittedAt(surveyId: string, weekStart: IsoWeekStart): Promise<Date | null> {
+  async findSubmittedAt(surveyId: SurveyId, weekStart: IsoWeekStart): Promise<Date | null> {
     const { userId } = tenantContext.require();
     return this.db.run(async (tx) => {
       const existing = await tx.response.findUnique({

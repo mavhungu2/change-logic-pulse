@@ -242,6 +242,19 @@ export interface ResponseSubmission {
    * @throws TenancyError `UNKNOWN_QUESTION` — question not on this survey
    */
   submit(input: SubmitResponse): Promise<ResponseId>;
+
+  /**
+   * When the caller's own response for this survey and week was recorded, for
+   * the body of the 409 that `submit` provokes. `null` when there is none —
+   * including when the survey belongs to another organization, which is not
+   * distinguishable from there being no response and must not become so.
+   *
+   * On this interface rather than a second one because it is the same use case:
+   * the member is told they have already answered, and when. Splitting it out
+   * would be a port with one method serving one branch of another port's error
+   * path.
+   */
+  findSubmittedAt(surveyId: SurveyId, weekStart: IsoWeekStart): Promise<Date | null>;
 }
 
 export interface SummaryReporting {

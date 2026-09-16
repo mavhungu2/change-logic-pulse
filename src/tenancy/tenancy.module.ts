@@ -48,9 +48,6 @@ import {
     SURVEY_LIFECYCLE,
     RESPONSE_SUBMISSION,
     SUMMARY_REPORTING,
-    // Exported for the 409 body only: the controller needs the existing
-    // response's timestamp, which is not part of any contract interface.
-    PrismaResponseRepository,
   ],
 })
 export class TenancyModule {}

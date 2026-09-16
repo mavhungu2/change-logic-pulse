@@ -20,7 +20,6 @@ import type {
 } from '../tenancy/contract.js';
 import { isTenancyError } from '../tenancy/tenancy.errors.js';
 import { RESPONSE_SUBMISSION, SURVEY_CATALOGUE } from '../tenancy/tokens.js';
-import { PrismaResponseRepository } from '../tenancy/response.repository.js';
 
 function parseAnswers(body: unknown): readonly SubmittedAnswer[] {
   const payload = body as { answers?: unknown } | null;
@@ -62,7 +61,6 @@ export class ResponsesController {
   constructor(
     @Inject(RESPONSE_SUBMISSION) private readonly submission: ResponseSubmission,
     @Inject(SURVEY_CATALOGUE) private readonly catalogue: SurveyCatalogue,
-    private readonly responses: PrismaResponseRepository,
   ) {}
 
   @Post()
@@ -100,7 +98,7 @@ export class ResponsesController {
         // A normal outcome, not a failure: the member already answered. The body
         // says which week that was and when, so the UI can show the
         // already-responded state instead of an error toast.
-        const submittedAt = await this.responses.findSubmittedAt(surveyId, weekStart);
+        const submittedAt = await this.submission.findSubmittedAt(surveyId, weekStart);
         throw new ConflictException({
           statusCode: 409,
           error: 'Conflict',
