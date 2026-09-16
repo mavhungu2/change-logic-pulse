@@ -50,6 +50,16 @@ export type ResponseId = string;
 
 export type Role = 'manager' | 'member';
 export type SurveyStatus = 'draft' | 'active' | 'archived';
+
+/**
+ * The statuses a manager may move a survey *to*.
+ *
+ * `draft` is missing on purpose: it is an insert-time state, and a survey that
+ * has been published may already carry responses. The database enforces this
+ * independently with a BEFORE UPDATE trigger — the type narrows the API surface,
+ * it is not what makes the rule true.
+ */
+export type ManagedSurveyStatus = Extract<SurveyStatus, 'active' | 'archived'>;
 export type QuestionType = 'rating' | 'yes_no';
 
 /**
@@ -184,6 +194,20 @@ export interface SurveyCatalogue {
 export interface SurveyAuthoring {
   /** @throws TenancyError `QUESTION_COUNT_EXCEEDED` */
   create(draft: NewSurvey): Promise<SurveyId>;
+}
+
+export interface SurveyLifecycle {
+  /**
+   * Opens a survey to responses, or closes it. Idempotent: setting the status a
+   * survey already has succeeds and returns the row unchanged.
+   *
+   * Closing is not deleting — an archived survey keeps its responses and its
+   * summary stays readable. Nothing else about a survey is editable through
+   * this boundary; see ManagedSurveyStatus.
+   *
+   * `null` when it does not exist *or* belongs to another organization.
+   */
+  setStatus(id: SurveyId, status: ManagedSurveyStatus): Promise<SurveyListing | null>;
 }
 
 export interface ResponseSubmission {

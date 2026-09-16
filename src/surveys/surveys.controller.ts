@@ -1,19 +1,48 @@
-import { BadRequestException, Body, Controller, Get, Inject, Post } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Inject,
+  NotFoundException,
+  Param,
+  ParseUUIDPipe,
+  Patch,
+  Post,
+} from '@nestjs/common';
 import { weekStartOf } from '../common/week.js';
 import { Roles } from '../auth/roles.decorator.js';
 import type {
   ActiveSurvey,
   ActiveSurveyReader,
+  ManagedSurveyStatus,
   NewQuestion,
   NewSurvey,
   QuestionType,
   SurveyAuthoring,
   SurveyCatalogue,
+  SurveyLifecycle,
   SurveyListing,
 } from '../tenancy/contract.js';
-import { ACTIVE_SURVEY_READER, SURVEY_AUTHORING, SURVEY_CATALOGUE } from '../tenancy/tokens.js';
+import {
+  ACTIVE_SURVEY_READER,
+  SURVEY_AUTHORING,
+  SURVEY_CATALOGUE,
+  SURVEY_LIFECYCLE,
+} from '../tenancy/tokens.js';
 
 const QUESTION_TYPES: readonly QuestionType[] = ['rating', 'yes_no'];
+/** 'draft' is a real status and deliberately not a destination — see the contract. */
+const MANAGED_STATUSES: readonly ManagedSurveyStatus[] = ['active', 'archived'];
+
+function parseStatusChange(body: unknown): ManagedSurveyStatus {
+  const change = body as { status?: unknown } | null;
+  const status = change?.status;
+  if (!MANAGED_STATUSES.includes(status as ManagedSurveyStatus)) {
+    throw new BadRequestException(`status must be one of: ${MANAGED_STATUSES.join(', ')}`);
+  }
+  return status as ManagedSurveyStatus;
+}
 
 function parseNewSurvey(body: unknown): NewSurvey {
   const draft = body as { title?: unknown; questions?: unknown } | null;
@@ -53,6 +82,7 @@ export class SurveysController {
     @Inject(ACTIVE_SURVEY_READER) private readonly activeSurveys: ActiveSurveyReader,
     @Inject(SURVEY_CATALOGUE) private readonly catalogue: SurveyCatalogue,
     @Inject(SURVEY_AUTHORING) private readonly authoring: SurveyAuthoring,
+    @Inject(SURVEY_LIFECYCLE) private readonly lifecycle: SurveyLifecycle,
   ) {}
 
   /** Declared before any ':id' route so 'active' is not read as an id. */
@@ -75,5 +105,23 @@ export class SurveysController {
   async create(@Body() body: unknown): Promise<{ id: string }> {
     const id = await this.authoring.create(parseNewSurvey(body));
     return { id };
+  }
+
+  /**
+   * Close a survey, or reopen it. The only thing about a survey a manager can
+   * change after it exists — a title with responses filed under it is history,
+   * and the API is not granted the column.
+   */
+  @Patch(':id')
+  @Roles('manager')
+  async setStatus(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: unknown,
+  ): Promise<SurveyListing> {
+    const updated = await this.lifecycle.setStatus(id, parseStatusChange(body));
+    // Another organization's survey and an id that never existed are the same
+    // 404 here, for the same reason they are everywhere else.
+    if (!updated) throw new NotFoundException('Survey not found');
+    return updated;
   }
 }

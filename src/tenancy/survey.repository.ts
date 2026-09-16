@@ -3,10 +3,12 @@ import type {
   ActiveSurvey,
   ActiveSurveyReader,
   IsoWeekStart,
+  ManagedSurveyStatus,
   NewSurvey,
   SurveyAuthoring,
   SurveyCatalogue,
   SurveyId,
+  SurveyLifecycle,
   SurveyListing,
 } from './contract.js';
 import { tenantContext } from './tenant-context.js';
@@ -17,7 +19,7 @@ const asDate = (week: IsoWeekStart): Date => new Date(`${week}T00:00:00.000Z`);
 
 @Injectable()
 export class PrismaSurveyRepository
-  implements ActiveSurveyReader, SurveyCatalogue, SurveyAuthoring
+  implements ActiveSurveyReader, SurveyCatalogue, SurveyAuthoring, SurveyLifecycle
 {
   constructor(private readonly db: TenantDb) {}
 
@@ -106,6 +108,28 @@ export class PrismaSurveyRepository
       });
 
       return survey.id;
+    });
+  }
+
+  async setStatus(id: SurveyId, status: ManagedSurveyStatus): Promise<SurveyListing | null> {
+    return this.db.run(async (tx) => {
+      // updateMany rather than update: Prisma's update throws when it matches
+      // nothing, and matching nothing is the ordinary case here — it is exactly
+      // what another tenant's id looks like once row-level security has filtered
+      // the row away. A thrown driver error would have to be caught and turned
+      // back into "not found"; a count of zero already says it.
+      //
+      // No org_id in the WHERE and none needed, as everywhere else in this file.
+      // The UPDATE policy's WITH CHECK would refuse a row leaving the tenant
+      // even if this statement tried, and the grant is on the status column
+      // alone, so there is no statement here that could.
+      const { count } = await tx.survey.updateMany({ where: { id }, data: { status } });
+      if (count === 0) return null;
+
+      return await tx.survey.findUnique({
+        where: { id },
+        select: { id: true, title: true, status: true },
+      });
     });
   }
 }

@@ -106,6 +106,16 @@ each one produces a system that *looks* isolated and is not.
    setting is absent.
 6. The GUC value comes from the **verified token only** — never from a request body,
    query string, header, or route param.
+7. **Grant no wider than the operation needs.** Policies decide *which rows*; grants
+   decide *which verbs and which columns*. Managing a survey is a change of `status` and
+   nothing else, so the app role gets `GRANT UPDATE ("status") ON "surveys"` — not a
+   table-level `GRANT UPDATE`, which would also hand it `title`, `created_by` and
+   `org_id`. The two controls are independent and both are worth having: a column grant
+   stops a statement being *written*, and `WITH CHECK` stops a row *leaving the tenant*
+   even for a role that holds full `UPDATE`.
+   A rule about a **transition** cannot be a `CHECK` — a `CHECK` sees only the row being
+   written, never the row being replaced. It belongs in a `BEFORE UPDATE` trigger, still
+   applied by the migration, so it holds for `psql` too.
 
 #### Plumbing
 
@@ -177,6 +187,7 @@ POST /surveys/:id/responses           Member: submit; 409 if already responded t
 
 POST /surveys                         Manager: create (≤3 questions)
 GET  /surveys                         Manager: own org's surveys
+PATCH /surveys/:id                    Manager: close or reopen — {status: active|archived}
 GET  /surveys/:id/summary?week=YYYY-MM-DD    Manager: weekly rollup
 ```
 

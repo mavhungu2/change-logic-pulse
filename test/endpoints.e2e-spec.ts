@@ -15,7 +15,16 @@ import { weekStartOf } from '../src/common/week.js';
 import { PrismaClient } from '../src/generated/prisma/client.js';
 
 const ORG_A = '11111111-1111-4111-8111-111111111111';
-const ORG_B_SURVEY = '22222222-2222-4222-8222-5000000000b1';
+const ORG_B = '22222222-2222-4222-8222-222222222222';
+/**
+ * Read from the database in beforeAll, never written down here.
+ *
+ * It was written down here, as an id the seed does not produce, and so the
+ * cross-tenant tests below were asserting 404 for a survey that did not exist
+ * anywhere — which any id would satisfy. A 404 only means something if the row
+ * is real and belongs to somebody else.
+ */
+let ORG_B_SURVEY = '';
 
 let app: INestApplication;
 let managerA = '';
@@ -34,6 +43,33 @@ const login = async (email: string): Promise<string> => {
 };
 
 const auth = (token: string) => ({ Authorization: `Bearer ${token}` });
+
+/**
+ * A survey's status read as the owner from inside one organization.
+ *
+ * The scoping is the assertion: `organizations` and `surveys` are FORCEd, so an
+ * unscoped read here returns nothing and would confirm any outcome at all.
+ */
+async function statusOf(orgId: string, surveyId: string): Promise<string | undefined> {
+  const owner = new PrismaClient({
+    adapter: new PrismaPg({ connectionString: process.env['MIGRATION_DATABASE_URL']! }),
+  });
+  try {
+    return await owner.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT set_config('app.current_org_id', ${orgId}, true)`;
+      // Qualified by orgId for the same reason the id is: a read that trusts the
+      // policy cannot be evidence about the policy. If the row is not this org's,
+      // this returns undefined rather than somebody else's status.
+      const row = await tx.survey.findFirst({
+        where: { id: surveyId, orgId },
+        select: { status: true },
+      });
+      return row?.status;
+    });
+  } finally {
+    await owner.$disconnect();
+  }
+}
 
 /** A fresh survey so assertions do not depend on seeded response counts. */
 async function createSurvey(title: string): Promise<{ id: string; questionIds: string[] }> {
@@ -73,6 +109,19 @@ beforeAll(async () => {
   memberCountA = await owner.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT set_config('app.current_org_id', ${ORG_A}, true)`;
     return await tx.user.count({ where: { role: 'member' } });
+  });
+  ORG_B_SURVEY = await owner.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT set_config('app.current_org_id', ${ORG_B}, true)`;
+    // The explicit orgId is load-bearing, not belt-and-braces. These tests write
+    // to this id, and the thing they are testing is the policy that decides
+    // which rows a scope can see — so the fixture must not let that policy pick
+    // the row. Under the mutation that replaces surveys_select with USING
+    // (true), an unqualified findFirst here returned org A's survey, and the
+    // cross-tenant test then archived the seeded survey it was supposed to be
+    // proving it could not touch.
+    const survey = await tx.survey.findFirst({ where: { orgId: ORG_B }, select: { id: true } });
+    if (!survey) throw new Error('Seed the database first: npm run db:seed');
+    return survey.id;
   });
   await owner.$disconnect();
 
@@ -265,5 +314,151 @@ describe('the weekly summary', () => {
       .set(auth(managerA))
       .expect(200);
     expect(wednesday.body.weekStart).toBe('2026-09-14');
+  });
+});
+
+describe('a manager manages the surveys their organization owns', () => {
+  it('archives an active survey, and members stop being offered it', async () => {
+    const { id } = await createSurvey('Archive probe');
+
+    const listedBefore = await request(app.getHttpServer())
+      .get('/surveys/active')
+      .set(auth(memberA))
+      .expect(200);
+    expect((listedBefore.body as { id: string }[]).map((s) => s.id)).toContain(id);
+
+    const patched = await request(app.getHttpServer())
+      .patch(`/surveys/${id}`)
+      .set(auth(managerA))
+      .send({ status: 'archived' })
+      .expect(200);
+    expect(patched.body).toEqual({ id, title: 'Archive probe', status: 'archived' });
+
+    const listedAfter = await request(app.getHttpServer())
+      .get('/surveys/active')
+      .set(auth(memberA))
+      .expect(200);
+    expect((listedAfter.body as { id: string }[]).map((s) => s.id)).not.toContain(id);
+  });
+
+  it('closes the survey to new responses, as a normal 409 rather than a failure', async () => {
+    const { id, questionIds } = await createSurvey('Closed to responses probe');
+    await request(app.getHttpServer())
+      .patch(`/surveys/${id}`)
+      .set(auth(managerA))
+      .send({ status: 'archived' })
+      .expect(200);
+
+    const refused = await request(app.getHttpServer())
+      .post(`/surveys/${id}/responses`)
+      .set(auth(memberA))
+      .send({
+        answers: [
+          { questionId: questionIds[0], value: 4 },
+          { questionId: questionIds[1], value: true },
+        ],
+      })
+      .expect(409);
+    expect(refused.body.message).toMatch(/archived/i);
+  });
+
+  it('reopens an archived survey', async () => {
+    const { id } = await createSurvey('Reopen probe');
+    await request(app.getHttpServer())
+      .patch(`/surveys/${id}`)
+      .set(auth(managerA))
+      .send({ status: 'archived' })
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .patch(`/surveys/${id}`)
+      .set(auth(managerA))
+      .send({ status: 'active' })
+      .expect(200);
+
+    const listed = await request(app.getHttpServer())
+      .get('/surveys/active')
+      .set(auth(memberA))
+      .expect(200);
+    expect((listed.body as { id: string }[]).map((s) => s.id)).toContain(id);
+  });
+
+  it('keeps the summary readable after archiving — closing is not deleting', async () => {
+    const { id, questionIds } = await createSurvey('Archived summary probe');
+    await request(app.getHttpServer())
+      .post(`/surveys/${id}/responses`)
+      .set(auth(memberA))
+      .send({
+        answers: [
+          { questionId: questionIds[0], value: 5 },
+          { questionId: questionIds[1], value: false },
+        ],
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .patch(`/surveys/${id}`)
+      .set(auth(managerA))
+      .send({ status: 'archived' })
+      .expect(200);
+
+    const summary = await request(app.getHttpServer())
+      .get(`/surveys/${id}/summary`)
+      .set(auth(managerA))
+      .expect(200);
+    expect(summary.body.completedCount).toBe(1);
+  });
+
+  it('a Member cannot archive a survey', async () => {
+    const { id } = await createSurvey('Member archive probe');
+    await request(app.getHttpServer())
+      .patch(`/surveys/${id}`)
+      .set(auth(memberA))
+      .send({ status: 'archived' })
+      .expect(403);
+  });
+
+  it('another org’s survey is 404, and is left exactly as it was', async () => {
+    const before = await statusOf(ORG_B, ORG_B_SURVEY);
+    expect(before, 'the seeded org B survey should be active to begin with').toBe('active');
+
+    await request(app.getHttpServer())
+      .patch(`/surveys/${ORG_B_SURVEY}`)
+      .set(auth(managerA))
+      .send({ status: 'archived' })
+      .expect(404);
+
+    // Read back from inside org B. An unscoped read here would see nothing and
+    // pass whatever happened.
+    expect(await statusOf(ORG_B, ORG_B_SURVEY)).toBe('active');
+  });
+
+  it('refuses a status outside the two a manager may set', async () => {
+    const { id } = await createSurvey('Status validation probe');
+    // 'draft' is a real enum value and still not a destination: a survey that has
+    // been published cannot be unpublished. The database refuses it too.
+    await request(app.getHttpServer())
+      .patch(`/surveys/${id}`)
+      .set(auth(managerA))
+      .send({ status: 'draft' })
+      .expect(400);
+    await request(app.getHttpServer())
+      .patch(`/surveys/${id}`)
+      .set(auth(managerA))
+      .send({ status: 'nonsense' })
+      .expect(400);
+    await request(app.getHttpServer())
+      .patch(`/surveys/${id}`)
+      .set(auth(managerA))
+      .send({})
+      .expect(400);
+  });
+
+  it('refuses an id that is not a uuid, rather than failing in the driver', async () => {
+    await request(app.getHttpServer())
+      .patch('/surveys/not-a-uuid')
+      .set(auth(managerA))
+      .send({ status: 'archived' })
+      .expect(400);
   });
 });

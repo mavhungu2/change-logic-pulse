@@ -13,6 +13,7 @@ import {
   SUMMARY_REPORTING,
   SURVEY_AUTHORING,
   SURVEY_CATALOGUE,
+  SURVEY_LIFECYCLE,
 } from './tokens.js';
 
 /**
@@ -34,6 +35,7 @@ import {
     { provide: ACTIVE_SURVEY_READER, useExisting: PrismaSurveyRepository },
     { provide: SURVEY_CATALOGUE, useExisting: PrismaSurveyRepository },
     { provide: SURVEY_AUTHORING, useExisting: PrismaSurveyRepository },
+    { provide: SURVEY_LIFECYCLE, useExisting: PrismaSurveyRepository },
     { provide: RESPONSE_SUBMISSION, useExisting: PrismaResponseRepository },
     { provide: SUMMARY_REPORTING, useClass: PrismaSummaryRepository },
   ],
@@ -43,6 +45,7 @@ import {
     ACTIVE_SURVEY_READER,
     SURVEY_CATALOGUE,
     SURVEY_AUTHORING,
+    SURVEY_LIFECYCLE,
     RESPONSE_SUBMISSION,
     SUMMARY_REPORTING,
     // Exported for the 409 body only: the controller needs the existing

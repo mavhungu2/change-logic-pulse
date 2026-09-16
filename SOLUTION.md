@@ -1,7 +1,7 @@
 # SOLUTION
 
-Multi-tenant weekly pulse surveys. ~2,500 lines of first-party TypeScript, three
-migrations, 25 row-level security policies, 65 tests.
+Multi-tenant weekly pulse surveys. ~2,900 lines of first-party TypeScript, four
+migrations, 25 row-level security policies, 77 tests.
 
 ---
 
@@ -17,6 +17,7 @@ GET  /surveys/active                       Member: all active surveys + question
 POST /surveys/:id/responses                Member: submit; 409 if already answered
 POST /surveys                              Manager: create (1-3 questions)
 GET  /surveys                              Manager: own org's surveys
+PATCH /surveys/:id                         Manager: close or reopen a survey
 GET  /surveys/:id/summary?week=YYYY-MM-DD  Manager: weekly rollup
 ```
 
@@ -32,13 +33,23 @@ already-answered state on return; a Manager reads the weekly rollup. Loading and
 error states are a discriminated union in a hook, so a screen renders all three
 cases or does not compile.
 
-**Cut, deliberately.** Survey-creation UI (the endpoint exists and is tested;
-surveys come from the seed). A router — three screens, one state variable. A
-week picker — the API takes `?week=`, the UI shows the current week. Token
-persistence — it lives in memory, so a refresh returns to the picker. Charts,
-component library, state library. UI tests: the seven tests that matter here are
-API and database tests, and standing up React Testing Library bought less than it
-cost. Rate limiting on login — see §3.
+Managing a survey means opening and closing it, and that is the whole of what is
+editable after creation. The privilege is granted on one column — `GRANT UPDATE
+("status") ON "surveys"` — so the API cannot retitle a survey that already has
+responses filed under it, or move one between organizations, whatever a service
+decides to attempt. Returning a published survey to `draft` is refused by a
+`BEFORE UPDATE` trigger, because a rule about a transition cannot be a `CHECK`:
+a `CHECK` never sees the row being replaced. Closing is not deleting — an
+archived survey keeps its responses and its summary stays readable.
+
+**Cut, deliberately.** Survey creation and management *screens* — both endpoints
+exist and are tested, surveys come from the seed, and a manager closes one over
+the API. A router — three screens, one state variable. A week picker — the API
+takes `?week=`, the UI shows the current week. Token persistence — it lives in
+memory, so a refresh returns to the picker. Charts, component library, state
+library. UI tests: the tests that matter here are API and database tests, and
+standing up React Testing Library bought less than it cost. Rate limiting on
+login — see §3.
 
 Each of these is a screen or a dependency not built so that the two flows that
 were asked for are finished rather than three being half-finished.
@@ -337,9 +348,26 @@ adversarial pass was a phase at the end rather than a habit throughout. Next tim
 that pass runs continuously from the first migration.
 
 The second lesson is narrower and sharper: **a test that reads through RLS can
-pass vacuously.** Three of my own fixtures were wrong in exactly the way the
+pass vacuously.** Five of my own fixtures were wrong in exactly the way the
 production code was — one created surveys the new constraint forbade, one queried
 unscoped and so could not see the row it was asserting about, and one read a table
 the owner is also locked out of. Any data-integrity check in a system like this
 has to state which tenant it is looking from, or it is asserting about an empty
 set and reporting success.
+
+The last two are the sharpest, and they came from adding survey management at the
+end. The cross-tenant tests named the other organization's survey by a written-down
+uuid that the seed does not produce — so "another org's survey returns 404" was
+really "a uuid nobody has ever used returns 404", which is true of every uuid.
+That surfaced only because the new test asserted its own precondition (*this
+survey should be active before I try to archive it*) and got `undefined`.
+
+The replacement read the id from the database instead, and was wrong in a subtler
+way: it picked the row with an unqualified `findFirst` inside an org-B scope —
+trusting the very policy under test to choose which row the test would then write
+to. Under the mutation that replaces `surveys_select` with `USING (true)` it
+selected org A's survey, and the test that exists to prove a manager cannot touch
+another tenant's survey archived the seeded one. The suite still went red, so the
+mutation was "caught"; nothing said the test had done damage on its way past. I
+found it by checking the seed after a mutation run rather than by reading output.
+A fixture must not resolve its target through the control it is testing.

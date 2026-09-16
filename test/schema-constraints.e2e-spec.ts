@@ -12,6 +12,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 const { Client } = pg;
 
 let owner: pg.Client;
+/** The role the API actually connects as — what it may write is the point. */
+let appUser: pg.Client;
 let orgA = '';
 let orgB = '';
 let surveyA = '';
@@ -33,6 +35,32 @@ async function scoped<T>(orgId: string, work: () => Promise<T>): Promise<T> {
   }
 }
 
+/**
+ * Runs one statement as the given role and always rolls back, returning the
+ * error if any.
+ *
+ * Rolling back rather than committing matters while the rule being tested does
+ * not exist yet: a test that watches a write succeed must not leave that write
+ * in the seeded data the demo reads.
+ */
+async function probe(
+  client: pg.Client,
+  orgId: string,
+  sql: string,
+  params: unknown[] = [],
+): Promise<string | null> {
+  await client.query('BEGIN');
+  try {
+    await client.query('SELECT set_config($1, $2, true)', ['app.current_org_id', orgId]);
+    await client.query(sql, params);
+    return null;
+  } catch (error) {
+    return (error as Error).message;
+  } finally {
+    await client.query('ROLLBACK');
+  }
+}
+
 /** Runs one statement in its own transaction and returns the error, if any. */
 async function attempt(orgId: string, sql: string, params: unknown[] = []): Promise<string | null> {
   await owner.query('BEGIN');
@@ -51,6 +79,9 @@ async function attempt(orgId: string, sql: string, params: unknown[] = []): Prom
 beforeAll(async () => {
   owner = new Client({ connectionString: process.env['MIGRATION_DATABASE_URL']! });
   await owner.connect();
+
+  appUser = new Client({ connectionString: process.env['DATABASE_URL']! });
+  await appUser.connect();
 
   // organizations is FORCE-protected against the owner too, so an unscoped
   // SELECT here returns nothing. app_auth_lookup is the one path that resolves
@@ -84,6 +115,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await owner?.end();
+  await appUser?.end();
 });
 
 describe('S4 — an answer cannot reference another tenant’s question', () => {
@@ -180,5 +212,57 @@ describe('S7 — a response must answer every question on its survey', () => {
     );
     expect(error, 'a response with no answers was committed').not.toBeNull();
     expect(error).toMatch(/answer/i);
+  });
+});
+
+describe('managing a survey is a privilege the schema grants narrowly', () => {
+  it('lets the application role change a status', async () => {
+    const error = await probe(appUser, orgA, `UPDATE surveys SET status = 'archived' WHERE id = $1`, [
+      surveyA,
+    ]);
+    expect(error, 'the API cannot close a survey at all').toBeNull();
+  });
+
+  it('refuses to let the application role rewrite a title', async () => {
+    // The column-level grant is the control, not a service that declines to
+    // build the statement. Retitling a survey that already has responses
+    // relabels history, so the API is not given the ability in the first place.
+    const error = await probe(appUser, orgA, `UPDATE surveys SET title = 'renamed' WHERE id = $1`, [
+      surveyA,
+    ]);
+    expect(error, 'the API rewrote a survey title').not.toBeNull();
+    expect(error).toMatch(/permission denied/i);
+  });
+
+  it('refuses to let it move a survey to another organization', async () => {
+    const refused = await probe(appUser, orgA, `UPDATE surveys SET org_id = $2 WHERE id = $1`, [
+      surveyA,
+      orgB,
+    ]);
+    expect(refused, 'a survey was reassigned to another tenant').not.toBeNull();
+    expect(refused).toMatch(/permission denied/i);
+
+    // Two independent controls, and this asserts the second one rather than
+    // trusting it: the owner has full UPDATE on surveys, so the grant is not
+    // what stops it here. The surveys_update policy's WITH CHECK is — a row
+    // cannot be written into an organization the caller is not inside, whatever
+    // privileges the writer holds. Widening the grant above would not open this.
+    const stillRefused = await probe(owner, orgA, `UPDATE surveys SET org_id = $2 WHERE id = $1`, [
+      surveyA,
+      orgB,
+    ]);
+    expect(stillRefused, 'the owner moved a survey between tenants').not.toBeNull();
+    expect(stillRefused).toMatch(/row-level security/i);
+  });
+
+  it('refuses to return a published survey to draft, even as the owner', async () => {
+    // A CHECK cannot express this: it never sees the previous value. So it is a
+    // BEFORE UPDATE trigger — still the schema, still applied by the migration,
+    // and still true for a psql session that never goes near the API.
+    const error = await probe(owner, orgA, `UPDATE surveys SET status = 'draft' WHERE id = $1`, [
+      surveyA,
+    ]);
+    expect(error, 'an active survey was quietly unpublished').not.toBeNull();
+    expect(error).toMatch(/draft/i);
   });
 });
