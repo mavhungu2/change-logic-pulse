@@ -49,9 +49,13 @@ characters is truncated with the omitted length recorded. Prompts and tool
 Nothing was added, reordered, or rewritten.
 
 The local development credentials visible in the log (`JWT_SECRET`,
-`pulse_owner_pw`) were deliberately left in: they are already published in
-[`.env.example`](../.env.example), they only ever reach a container on localhost,
-and redacting them here while they sit in the repo would be theatre.
+`pulse_owner_pw`) were deliberately left in. `pulse_owner_pw` is still in
+[`.env.example`](../.env.example) and only ever reaches a container on localhost.
+The `JWT_SECRET` is the one `.env.example` shipped during the session; it was
+removed afterwards, so it now lives in this repository's git history instead — and
+in the blocklist in [`src/config.ts`](../src/config.ts), which refuses it at
+startup. Redacting either here while both remain readable in the repo would be
+theatre.
 
 Redaction was scripted rather than done by hand, so it is applied uniformly. The
 script is not committed — its keyword list names the very things it exists to

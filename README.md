@@ -31,12 +31,26 @@ ever been published here — including the one this file used to ship.
 `migrate deploy` does not either. Skip it and the seed fails with
 `ERR_MODULE_NOT_FOUND`.
 
-The seed prints the addresses to sign in with — there are no passwords:
+The seed prints what it wrote and the addresses to sign in with — there are no
+passwords:
 
 ```
-manager@northwind.test   manager2@northwind.test   member1@northwind.test   Northwind Logistics — 4 members, 100% responded
-manager@seabird.test     manager2@seabird.test     member1@seabird.test     Seabird Studios     — 5 members,  40% responded
+seeding week starting 2026-09-14
+
+  Northwind Logistics    2 managers, 4 members, 4 responded this week (100%)
+  Seabird Studios        2 managers, 5 members, 2 responded this week (40%)
+
+sign in with any of these (no password):
+  manager@northwind.test       manager
+  manager2@northwind.test      manager
+  member1@northwind.test       member
+  manager@seabird.test         manager
+  manager2@seabird.test        manager
+  member1@seabird.test         member
 ```
+
+The login picker offers a few more than this — the members who have not answered
+yet are the interesting ones to sign in as.
 
 Then, in two terminals:
 
@@ -56,11 +70,13 @@ with `{"status":"archived"}` closes it, after which members are no longer offere
 it and the summary stays readable. Both are covered in `test/endpoints.e2e-spec.ts`
 if you would rather read the behaviour than curl it.
 
-> **`.env.example` ships a working `JWT_SECRET`,** so a clone runs without editing
-> anything. It is committed, therefore public, therefore not a secret — generate
-> your own with `openssl rand -base64 48` before this goes anywhere real. The API
-> refuses to start without one and rejects the known placeholders, but it cannot
-> know that a value you copied from a public repository is shared.
+> **`.env.example` carries no signing key.** Copying it by hand leaves
+> `JWT_SECRET=""`, and the API refuses to start on an empty one — `npm run
+> env:init` is the step that fills it in, or `openssl rand -base64 48` if you
+> would rather do it yourself. `src/config.ts` also rejects every key that has
+> been published in this repository, including the one `.env.example` shipped
+> until [`d82c9d4`](../../commit/d82c9d4). What it cannot know is that a value
+> you copied from somewhere else is shared, so generate your own.
 
 > **Host port 5433, not 5432.** A natively installed PostgreSQL commonly holds 5432.
 > Override with `POSTGRES_HOST_PORT` in `.env` if 5433 is taken as well.
