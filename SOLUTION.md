@@ -295,6 +295,18 @@ The local development credentials stay in, because they are already published in
 `.env.example` and only ever reach a container on localhost. `ai-logs/README.md`
 says all of this in the folder itself.
 
+**Before any of it.** `ai-logs/00-runbook.md` is the plan, written two days
+before the first commit: a phase per commit, the prompt for each, a checklist to
+review the output against, and templates for rejecting it. It is included because
+it is also *wrong* in one important place. It locked tenant isolation to
+application-layer scoping, with row-level security listed as a documented next
+step — and that was overruled during the build, for the reason in §2. Three
+smaller decisions went the same way: pnpm workspaces became one npm project,
+PostgreSQL 16 became 18, and the partial unique index pinning one active survey
+per organization came out once it turned out to forbid something the brief
+allows. Deciding in advance is what made the reversals legible; obeying the plan
+would have shipped the weaker guarantee.
+
 **How the work was broken down.** `CLAUDE.md` fixes constraints and settles the
 decisions the brief left open. `SPEC.md` is the checkable plan — schema,
 endpoints, build order, cut list. Both were committed *before* any implementation

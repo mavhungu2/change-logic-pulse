@@ -1,12 +1,13 @@
 # AI session logs
 
-Transcript of the Claude Code session that produced this repository, exported
-from the tool's own session file (`~/.claude/projects/**/*.jsonl`) and converted
-to Markdown.
+The plan this repository was built to, and the transcript of the session that
+built it. The transcript is exported from the tool's own session file
+(`~/.claude/projects/**/*.jsonl`) and converted to Markdown.
 
-| File | Span (UTC) | Turns |
-|---|---|---|
-| [01-build-session.md](./01-build-session.md) | 2026-09-14 20:33 → 2026-09-15 22:14 | 26 typed prompts, 579 assistant turns, 358 tool calls |
+| File | What |
+|---|---|
+| [00-runbook.md](./00-runbook.md) | The execution plan, written 2026-09-13 — a phase per commit, the prompt for each, and the checklist its output was reviewed against |
+| [01-build-session.md](./01-build-session.md) | The build itself, 2026-09-14 20:33 → 2026-09-15 22:14 UTC: 26 typed prompts, 579 assistant turns, 358 tool calls |
 
 One session, start to finish: constraints, spec, the schema and its RLS policies,
 the policy proof and the mutation check that tests the proof, the request path,
@@ -16,6 +17,11 @@ the fixes that came out of it.
 It was preceded by a false start — the same opening prompt, interrupted after
 about thirty seconds and restarted as the session above. It produced no work
 product and is not included here.
+
+The runbook is here because the plan is part of the answer, and because it was
+overruled: it specified application-layer tenant scoping, and the build used
+row-level security instead. Its own preface covers that and the three smaller
+reversals.
 
 ## What was removed
 
