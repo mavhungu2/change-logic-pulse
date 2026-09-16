@@ -112,6 +112,14 @@ export interface Question {
 export interface ActiveSurvey {
   readonly id: SurveyId;
   readonly title: string;
+  /**
+   * The week this survey is being answered for, resolved by the server. The
+   * client is told which week it is in rather than working it out: the ISO week
+   * calculation exists once, in src/common/week.ts, and a browser deriving its
+   * own would be a second opinion — in a different timezone — about the value
+   * that decides whether a submission is a duplicate.
+   */
+  readonly weekStart: IsoWeekStart;
   readonly questions: readonly Question[];
   readonly alreadyRespondedThisWeek: boolean;
 }

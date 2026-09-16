@@ -230,6 +230,23 @@ describe('one response per member per week', () => {
     expect(typeof second.body.submittedAt).toBe('string');
   });
 
+  it('tells the member which week they are answering for', async () => {
+    const { id } = await createSurvey('Week-reporting probe');
+
+    const active = await request(app.getHttpServer())
+      .get('/surveys/active')
+      .set(auth(memberA))
+      .expect(200);
+
+    // The client is told the week rather than deriving it. A browser working it
+    // out for itself would be a second week calculation, in the viewer's
+    // timezone, deciding what the server's unique constraint has already decided.
+    const survey = (active.body as { id: string; weekStart: string }[]).find(
+      (candidate) => candidate.id === id,
+    );
+    expect(survey?.weekStart).toBe(weekStartOf());
+  });
+
   it('the client cannot choose which week its response lands in', async () => {
     const { id, questionIds } = await createSurvey('Week-forging probe');
     const answers = [

@@ -58,6 +58,16 @@ function QuestionField({
   );
 }
 
+/** Title, and the week the server says this is. Shown in every state. */
+function CardHeading({ survey }: { survey: ActiveSurvey }) {
+  return (
+    <>
+      <h3>{survey.title}</h3>
+      <p className="muted">Week of {survey.weekStart}</p>
+    </>
+  );
+}
+
 function SurveyCard({ survey, token }: { survey: ActiveSurvey; token: string }) {
   const [answers, setAnswers] = useState<Record<string, AnswerValue>>({});
   const [state, setState] = useState<SubmitState>(
@@ -103,7 +113,7 @@ function SurveyCard({ survey, token }: { survey: ActiveSurvey; token: string }) 
   if (state.kind === 'already-responded') {
     return (
       <section className="card">
-        <h3>{survey.title}</h3>
+        <CardHeading survey={survey} />
         <NoticePanel>
           <strong>You have already answered this week.</strong>
           <p className="muted">
@@ -119,7 +129,7 @@ function SurveyCard({ survey, token }: { survey: ActiveSurvey; token: string }) 
   if (state.kind === 'submitted') {
     return (
       <section className="card">
-        <h3>{survey.title}</h3>
+        <CardHeading survey={survey} />
         <NoticePanel>
           <strong>Thanks — your response is recorded.</strong>
           <p className="muted">You can answer again next week.</p>
@@ -130,7 +140,7 @@ function SurveyCard({ survey, token }: { survey: ActiveSurvey; token: string }) 
 
   return (
     <form className="card" onSubmit={submit}>
-      <h3>{survey.title}</h3>
+      <CardHeading survey={survey} />
       {survey.questions.map((question) => (
         <QuestionField
           key={question.id}

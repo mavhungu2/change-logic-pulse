@@ -46,6 +46,7 @@ export class PrismaSurveyRepository
       return surveys.map((survey) => ({
         id: survey.id,
         title: survey.title,
+        weekStart,
         questions: survey.questions.map((question) => ({
           id: question.id,
           text: question.text,
