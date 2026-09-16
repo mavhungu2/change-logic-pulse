@@ -215,6 +215,40 @@ describe('S7 — a response must answer every question on its survey', () => {
   });
 });
 
+describe('a response comes from a member', () => {
+  it('rejects one filed for a manager, which the completion rate would not count', async () => {
+    // The denominator is users with role 'member'. A manager's response would be
+    // in the numerator and not the denominator, so a survey could report more
+    // completions than the organization has members. @Roles('member') on the
+    // controller is not reached by a statement like this one.
+    const error = await attempt(
+      orgA,
+      `INSERT INTO responses (survey_id, user_id, org_id, week_start)
+       VALUES ($1, $2, $3, DATE '2025-03-03')`,
+      [surveyA, managerA, orgA],
+    );
+    expect(error, 'a manager filed a response').not.toBeNull();
+    expect(error).toMatch(/member/i);
+  });
+
+  it('rejects one filed for a user in another organization', async () => {
+    // Refused before the foreign key gets to it: at BEFORE INSERT time the key
+    // has not run, and another tenant's user is invisible rather than absent.
+    const managerB = await scoped(orgB, async () =>
+      (await owner.query<{ id: string }>(`SELECT id FROM users WHERE role = 'manager' LIMIT 1`))
+        .rows[0]!.id,
+    );
+
+    const error = await attempt(
+      orgA,
+      `INSERT INTO responses (survey_id, user_id, org_id, week_start)
+       VALUES ($1, $2, $3, DATE '2025-03-10')`,
+      [surveyA, managerB, orgA],
+    );
+    expect(error, 'another tenant’s user filed a response').not.toBeNull();
+  });
+});
+
 describe('managing a survey is a privilege the schema grants narrowly', () => {
   it('lets the application role change a status', async () => {
     const error = await probe(appUser, orgA, `UPDATE surveys SET status = 'archived' WHERE id = $1`, [

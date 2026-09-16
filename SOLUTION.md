@@ -151,6 +151,12 @@ worse for having a manager. The alternative reading is defensible — if you thi
 of it as "everyone who could have answered", and managers can't answer at all,
 then they are not eligible either, which lands in the same place.
 
+The numerator is held to the same population by the schema, not by the role
+guard: a `BEFORE INSERT` trigger on `responses` refuses a row whose user is not a
+member, so a completion rate cannot exceed 1 because a manager answered.
+`@Roles('member')` on the controller gives that rule a 403 and a sentence; it is
+not what makes it true.
+
 The consequence to know: the denominator is counted *now*, not as of that week.
 A member who joins on Friday makes Monday's completion rate drop retroactively.
 Fixing that properly means an eligibility snapshot per survey-week, which is more
