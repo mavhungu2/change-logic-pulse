@@ -34,8 +34,8 @@ ever been published here — including the one this file used to ship.
 The seed prints the addresses to sign in with — there are no passwords:
 
 ```
-manager@northwind.test   member1@northwind.test    Northwind Logistics — 4 members, 100% responded
-manager@seabird.test     member1@seabird.test      Seabird Studios     — 5 members,  40% responded
+manager@northwind.test   manager2@northwind.test   member1@northwind.test   Northwind Logistics — 4 members, 100% responded
+manager@seabird.test     manager2@seabird.test     member1@seabird.test     Seabird Studios     — 5 members,  40% responded
 ```
 
 Then, in two terminals:

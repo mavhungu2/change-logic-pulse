@@ -53,6 +53,7 @@ interface OrgSpec {
   readonly name: string;
   readonly domain: string;
   readonly surveyTitle: string;
+  readonly managerCount: number;
   readonly memberCount: number;
   readonly replies: readonly Reply[];
 }
@@ -69,6 +70,7 @@ const QUESTIONS = [
  * that switching users in the demo cannot be mistaken for a cached screen:
  *
  *                     Northwind      Seabird
+ *   managers              2             2
  *   members               4             5
  *   responded          4 (100%)      2 (40%)
  *   avg "how was..."     4.75          1.5
@@ -80,6 +82,7 @@ const ORGS: readonly OrgSpec[] = [
     name: 'Northwind Logistics',
     domain: 'northwind.test',
     surveyTitle: 'Northwind weekly pulse',
+    managerCount: 2,
     memberCount: 4,
     replies: [
       { member: 1, week: 5, blocked: false, support: 5 },
@@ -93,6 +96,7 @@ const ORGS: readonly OrgSpec[] = [
     name: 'Seabird Studios',
     domain: 'seabird.test',
     surveyTitle: 'Seabird weekly pulse',
+    managerCount: 2,
     memberCount: 5,
     replies: [
       { member: 1, week: 2, blocked: true, support: 1 },
@@ -104,8 +108,16 @@ const ORGS: readonly OrgSpec[] = [
 /** Stable uuid for rows that have no natural key of their own (the survey). */
 const surveyIdFor = (org: OrgSpec): string => `${org.id.slice(0, 24)}5000000000a1`;
 
-const emailFor = (org: OrgSpec, slot: number): string =>
-  slot === 0 ? `manager@${org.domain}` : `member${slot}@${org.domain}`;
+/**
+ * The first manager keeps the unsuffixed address. Every reference to this seed
+ * outside it — the README, the login picker, the e2e tests — names
+ * `manager@<domain>`, and renaming that to `manager1@` would buy nothing.
+ */
+const managerEmailFor = (org: OrgSpec, slot: number): string =>
+  slot === 1 ? `manager@${org.domain}` : `manager${slot}@${org.domain}`;
+
+const memberEmailFor = (org: OrgSpec, slot: number): string =>
+  `member${slot}@${org.domain}`;
 
 async function seedOrg(org: OrgSpec): Promise<void> {
   const weekStart = weekStartOf();
@@ -120,26 +132,34 @@ async function seedOrg(org: OrgSpec): Promise<void> {
       create: { id: org.id, name: org.name },
     });
 
-    const manager = await tx.user.upsert({
-      where: { email: emailFor(org, 0) },
-      update: { name: `Ada Manager (${org.name})`, role: 'manager' },
-      create: {
-        orgId: org.id,
-        email: emailFor(org, 0),
-        name: `Ada Manager (${org.name})`,
-        role: 'manager',
-      },
-      select: { id: true },
-    });
+    // Managers are seeded as a series for the same reason members are: one of a
+    // role proves the role exists, two prove nothing about the row is special.
+    // The author of the survey is the first of them.
+    let author: string | null = null;
+    for (let slot = 1; slot <= org.managerCount; slot += 1) {
+      const manager = await tx.user.upsert({
+        where: { email: managerEmailFor(org, slot) },
+        update: { name: `Manager ${slot} (${org.name})`, role: 'manager' },
+        create: {
+          orgId: org.id,
+          email: managerEmailFor(org, slot),
+          name: `Manager ${slot} (${org.name})`,
+          role: 'manager',
+        },
+        select: { id: true },
+      });
+      author ??= manager.id;
+    }
+    if (!author) throw new Error(`${org.name}: no managers seeded`);
 
     const memberIds = new Map<number, string>();
     for (let slot = 1; slot <= org.memberCount; slot += 1) {
       const member = await tx.user.upsert({
-        where: { email: emailFor(org, slot) },
+        where: { email: memberEmailFor(org, slot) },
         update: { name: `Member ${slot} (${org.name})`, role: 'member' },
         create: {
           orgId: org.id,
-          email: emailFor(org, slot),
+          email: memberEmailFor(org, slot),
           name: `Member ${slot} (${org.name})`,
           role: 'member',
         },
@@ -156,7 +176,7 @@ async function seedOrg(org: OrgSpec): Promise<void> {
         orgId: org.id,
         title: org.surveyTitle,
         status: 'active',
-        createdBy: manager.id,
+        createdBy: author,
       },
     });
 
@@ -226,7 +246,7 @@ async function seedOrg(org: OrgSpec): Promise<void> {
 
   const rate = Math.round((org.replies.length / org.memberCount) * 100);
   console.log(
-    `  ${org.name.padEnd(22)} ${org.memberCount} members, ` +
+    `  ${org.name.padEnd(22)} ${org.managerCount} managers, ${org.memberCount} members, ` +
       `${org.replies.length} responded this week (${rate}%)`,
   );
 }
@@ -237,8 +257,10 @@ async function main(): Promise<void> {
 
   console.log('\nsign in with any of these (no password):');
   for (const org of ORGS) {
-    console.log(`  ${emailFor(org, 0).padEnd(28)} manager`);
-    console.log(`  ${emailFor(org, 1).padEnd(28)} member`);
+    for (let slot = 1; slot <= org.managerCount; slot += 1) {
+      console.log(`  ${managerEmailFor(org, slot).padEnd(28)} manager`);
+    }
+    console.log(`  ${memberEmailFor(org, 1).padEnd(28)} member`);
   }
 }
 

@@ -11,10 +11,12 @@ import { ErrorPanel } from './Feedback';
  * dropdown of seeded users; this is that, and it costs the product nothing.
  */
 const SEEDED_USERS = [
-  { email: 'manager@northwind.test', label: 'Northwind Logistics — Manager' },
+  { email: 'manager@northwind.test', label: 'Northwind Logistics — Manager 1' },
+  { email: 'manager2@northwind.test', label: 'Northwind Logistics — Manager 2' },
   { email: 'member1@northwind.test', label: 'Northwind Logistics — Member 1' },
   { email: 'member2@northwind.test', label: 'Northwind Logistics — Member 2' },
-  { email: 'manager@seabird.test', label: 'Seabird Studios — Manager' },
+  { email: 'manager@seabird.test', label: 'Seabird Studios — Manager 1' },
+  { email: 'manager2@seabird.test', label: 'Seabird Studios — Manager 2' },
   { email: 'member1@seabird.test', label: 'Seabird Studios — Member 1' },
   { email: 'member3@seabird.test', label: 'Seabird Studios — Member 3 (has not answered)' },
 ];
