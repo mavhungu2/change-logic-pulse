@@ -16,3 +16,4 @@ src/generated/
 
 # Transient marker from scripts/verify-rls-proof.sh
 .rls-mutation-state
+.idea/
