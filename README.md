@@ -64,6 +64,27 @@ land on the weekly summary, members on the surveys they can answer. Switching
 between the two organizations is the quickest way to see the isolation: 100%
 completion and an average of 4.75 against 40% and 1.5.
 
+Two query parameters make that linkable, so both organizations can be open in two
+tabs at once:
+
+```
+?as=manager@seabird.test                     sign in as a seeded user
+?survey=<uuid>                               which summary a manager is reading
+```
+
+**Neither names an organization, and neither can.** The tenant is a claim in the
+token the server signed, so the address bar has nothing to edit: point a Seabird
+manager at a Northwind survey id and the API answers **404, not 403** — it will
+not confirm the id belongs to anybody.
+
+```
+http://localhost:5173/?as=manager@seabird.test&survey=11111111-1111-4111-8111-5000000000a1
+```
+
+`?as=` carries an email, never a token — the app exchanges it through the ordinary
+`POST /auth/login`, so it grants nothing the picker does not and disappears with
+`ENABLE_DEV_LOGIN`. See [`web/src/url.ts`](./web/src/url.ts).
+
 Creating and closing surveys are API-only on purpose — the two screens in the
 brief were finished instead. `POST /surveys` creates one — active by default, or
 `{"status":"draft"}` to hold it back until you publish it — and `PATCH
