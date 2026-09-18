@@ -64,26 +64,27 @@ land on the weekly summary, members on the surveys they can answer. Switching
 between the two organizations is the quickest way to see the isolation: 100%
 completion and an average of 4.75 against 40% and 1.5.
 
-Two query parameters make that linkable, so both organizations can be open in two
-tabs at once:
+Sign in and sign out are exactly that — picking a user is a login, the button in
+the header is a logout. Identity is a session, so it is not in the URL and the
+token is not in storage; a refresh returns to the picker.
+
+What the URL carries is the resource being read, so a summary is linkable:
 
 ```
-?as=manager@seabird.test                     sign in as a seeded user
 ?survey=<uuid>                               which summary a manager is reading
 ```
 
-**Neither names an organization, and neither can.** The tenant is a claim in the
-token the server signed, so the address bar has nothing to edit: point a Seabird
-manager at a Northwind survey id and the API answers **404, not 403** — it will
-not confirm the id belongs to anybody.
+**It does not name an organization, and it cannot.** The tenant is a claim in the
+token the server signed, so the only thing in the address bar is *which* survey,
+never *whose*. Sign in as a Seabird manager, paste a Northwind survey id, and the
+API answers **404, not 403** — it will not confirm the id belongs to anybody:
 
 ```
-http://localhost:5173/?as=manager@seabird.test&survey=11111111-1111-4111-8111-5000000000a1
+http://localhost:5173/?survey=11111111-1111-4111-8111-5000000000a1
 ```
 
-`?as=` carries an email, never a token — the app exchanges it through the ordinary
-`POST /auth/login`, so it grants nothing the picker does not and disappears with
-`ENABLE_DEV_LOGIN`. See [`web/src/url.ts`](./web/src/url.ts).
+Open two tabs, sign into each as a different organization, and the same link gives
+each of them a different answer. See [`web/src/url.ts`](./web/src/url.ts).
 
 Creating and closing surveys are API-only on purpose — the two screens in the
 brief were finished instead. `POST /surveys` creates one — active by default, or

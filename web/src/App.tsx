@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import type { MeView } from '@api/tenancy/contract.js';
-import { ApiError, api } from './api';
+import { api } from './api';
 import { ErrorPanel, Loading } from './Feedback';
 import { Login } from './Login';
 import { ManagerFlow } from './ManagerFlow';
 import { MemberFlow } from './MemberFlow';
-import { readParam, writeParams } from './url';
+import { writeParams } from './url';
 import { useAsync } from './useAsync';
 
 function SignedIn({ token, onSignOut }: { token: string; onSignOut: () => void }) {
@@ -17,7 +17,7 @@ function SignedIn({ token, onSignOut }: { token: string; onSignOut: () => void }
       <>
         <ErrorPanel message={state.error.message} onRetry={reload} />
         <button type="button" onClick={onSignOut}>
-          Sign in as someone else
+          Sign out
         </button>
       </>
     );
@@ -30,7 +30,8 @@ function SignedIn({ token, onSignOut }: { token: string; onSignOut: () => void }
         <div>
           {/* The organization is read from /me — which is to say from the token
               the server signed, never from the URL. Two tabs showing two
-              different names here are two tenants, not two routes. */}
+              different names here are two sessions in two tenants, not two
+              routes. */}
           <strong>{me.org.name}</strong>
           <span className="muted">
             {' '}
@@ -38,7 +39,7 @@ function SignedIn({ token, onSignOut }: { token: string; onSignOut: () => void }
           </span>
         </div>
         <button type="button" onClick={onSignOut}>
-          Switch user
+          Sign out
         </button>
       </header>
 
@@ -51,64 +52,29 @@ function SignedIn({ token, onSignOut }: { token: string; onSignOut: () => void }
 
 export default function App() {
   // Deliberately in memory, not localStorage: a bearer token in storage is
-  // readable by any script on the page. What survives a refresh is `?as=` in
-  // the URL, which is an email and not a credential — the token is fetched
-  // again through the ordinary login. See url.ts.
+  // readable by any script on the page, and a refresh returning to the picker
+  // is no hardship for a development-only sign-in.
+  //
+  // It is not in the URL either. Identity is a session, not a place — picking a
+  // user is a login and the button above is a logout. What the URL carries is
+  // the survey being read, because that is a resource with an address; see
+  // url.ts.
   const [token, setToken] = useState<string | null>(null);
-  const [as, setAs] = useState<string | null>(() => readParam('as'));
-  const [autoFailure, setAutoFailure] = useState<ApiError | null>(null);
-
-  // A link that names a user signs in as that user, so two tabs can hold two
-  // organizations at once and a reload lands where it left off.
-  useEffect(() => {
-    if (token !== null || as === null || autoFailure !== null) return;
-
-    let cancelled = false;
-    api<{ accessToken: string }>('/auth/login', { method: 'POST', body: { email: as } })
-      .then(({ accessToken }) => {
-        if (!cancelled) setToken(accessToken);
-      })
-      .catch((error: unknown) => {
-        // A ?as= naming somebody who is not seeded, or a dev login that is
-        // switched off, falls back to the picker rather than to a blank page.
-        if (!cancelled) setAutoFailure(error as ApiError);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [as, token, autoFailure]);
-
-  function signIn(accessToken: string, email: string) {
-    setToken(accessToken);
-    setAs(email);
-    setAutoFailure(null);
-    writeParams({ as: email, survey: null });
-  }
 
   function signOut() {
     setToken(null);
-    setAs(null);
-    setAutoFailure(null);
-    writeParams({ as: null, survey: null });
-  }
-
-  if (token !== null) {
-    return (
-      <main>
-        <h1>Pulse Surveys</h1>
-        <SignedIn token={token} onSignOut={signOut} />
-      </main>
-    );
+    // The survey the previous session was reading is not this one's to inherit —
+    // and left behind it would greet the next user with someone else's id.
+    writeParams({ survey: null });
   }
 
   return (
     <main>
       <h1>Pulse Surveys</h1>
-      {as !== null && autoFailure === null ? (
-        <Loading what={as} />
+      {token === null ? (
+        <Login onSignedIn={setToken} />
       ) : (
-        <Login onSignedIn={signIn} failure={autoFailure} />
+        <SignedIn token={token} onSignOut={signOut} />
       )}
     </main>
   );
